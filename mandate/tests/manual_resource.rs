@@ -46,7 +46,7 @@ impl ResourcePtr for Node {
 }
 
 impl DynResource for Node {
-    fn schema(&self) -> &'static Schema {
+    fn resource_schema(&self) -> &'static Schema {
         &NODE_SCHEMA
     }
     fn value(&self, field: FieldIdx) -> ValueRef<'_> {

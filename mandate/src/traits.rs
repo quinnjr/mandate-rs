@@ -13,7 +13,7 @@ pub trait Resource: 'static {
 /// Object-safe, schema-driven access to a resource's fields.
 pub trait DynResource {
     /// The schema of this resource.
-    fn schema(&self) -> &'static Schema;
+    fn resource_schema(&self) -> &'static Schema;
     /// The value of a scalar field.
     fn value(&self, field: FieldIdx) -> ValueRef<'_>;
     /// The state of a relation field.

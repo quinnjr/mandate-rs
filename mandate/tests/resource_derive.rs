@@ -1,8 +1,8 @@
 #![cfg(all(feature = "derive", feature = "chrono", feature = "uuid"))]
 mod common;
 use common::fixture::*;
-// `DynResource` is deliberately not imported: with both traits in scope,
-// `Post::schema()` would be ambiguous. Dynamic reads go through `as_dyn()`.
+// `DynResource::resource_schema` avoids clashing with `Resource::schema`.
+// `Post::schema()` is unambiguous even with `use mandate::*` (see `glob_import_schema`).
 use mandate::{
     CardinalityKind, FieldDef, FieldIdx, FieldKind, Kind, RelationRef, RelationSlot, Resource,
     ResourcePtr, Schema, ValueRef,
@@ -104,7 +104,7 @@ fn consts_match_indices() {
 fn dyn_values_and_relations() {
     let p = post();
     let d = p.as_dyn();
-    assert!(std::ptr::eq(d.schema(), Post::schema()));
+    assert!(std::ptr::eq(d.resource_schema(), Post::schema()));
     assert_eq!(d.value(Post::ID.idx()), ValueRef::Int(1));
     assert_eq!(d.value(Post::REVIEWER_ID.idx()), ValueRef::Null);
     assert_eq!(d.value(Post::TITLE.idx()), ValueRef::Str("Hello"));
@@ -114,7 +114,7 @@ fn dyn_values_and_relations() {
     assert_eq!(d.value(Post::SCORE.idx()), ValueRef::Float(1.0));
     match d.relation(Post::ORG.idx()) {
         RelationRef::One(o) => {
-            assert!(std::ptr::eq(o.schema(), Org::schema()));
+            assert!(std::ptr::eq(o.resource_schema(), Org::schema()));
             assert_eq!(o.value(Org::ID.idx()), ValueRef::Int(3));
         }
         _ => panic!("expected One"),
@@ -300,4 +300,16 @@ fn raw_idents_and_renames() {
     };
     assert_eq!(r.as_dyn().value(Renamed::TYPE.idx()), ValueRef::Str("a"));
     assert_eq!(r.as_dyn().value(Renamed::TITLE.idx()), ValueRef::NotLoaded);
+}
+
+#[test]
+fn glob_import_schema() {
+    mod glob {
+        use super::Post;
+        use mandate::*;
+        pub fn run() -> bool {
+            std::ptr::eq(Post::schema(), Post::schema())
+        }
+    }
+    assert!(glob::run());
 }

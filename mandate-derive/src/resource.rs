@@ -252,7 +252,7 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
 
         #[automatically_derived]
         impl ::mandate::DynResource for #res {
-            fn schema(&self) -> &'static ::mandate::Schema {
+            fn resource_schema(&self) -> &'static ::mandate::Schema {
                 <Self as ::mandate::Resource>::schema()
             }
             fn value(&self, field: ::mandate::FieldIdx) -> ::mandate::ValueRef<'_> {
