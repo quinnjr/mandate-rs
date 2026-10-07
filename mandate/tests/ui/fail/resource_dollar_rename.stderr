@@ -1,0 +1,5 @@
+error: field name `$and` must not start with `$`
+ --> tests/ui/fail/resource_dollar_rename.rs:5:25
+  |
+5 |     #[resource(rename = "$and")]
+  |                         ^^^^^^

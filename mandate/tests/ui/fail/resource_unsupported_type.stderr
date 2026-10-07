@@ -1,0 +1,38 @@
+error[E0277]: the trait bound `u64: mandate::Scalar` is not satisfied
+ --> tests/ui/fail/resource_unsupported_type.rs:6:11
+  |
+6 |     hits: u64,
+  |           ^^^ the trait `mandate::Scalar` is not implemented for `u64`
+  |
+  = help: the following other types implement trait `mandate::Scalar`:
+            f32
+            f64
+            i16
+            i32
+            i64
+            i8
+            u16
+            u32
+            u8
+note: required by a bound in `_::__assert`
+ --> tests/ui/fail/resource_unsupported_type.rs:6:11
+  |
+6 |     hits: u64,
+  |           ^^^ required by this bound in `__assert`
+
+error[E0277]: the trait bound `u64: mandate::Scalar` is not satisfied
+ --> tests/ui/fail/resource_unsupported_type.rs:6:11
+  |
+6 |     hits: u64,
+  |           ^^^ the trait `mandate::Scalar` is not implemented for `u64`
+  |
+  = help: the following other types implement trait `mandate::Scalar`:
+            f32
+            f64
+            i16
+            i32
+            i64
+            i8
+            u16
+            u32
+            u8

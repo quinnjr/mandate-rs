@@ -1,0 +1,5 @@
+error: `Wide` has 129 schema fields; at most 128 are allowed
+ --> tests/ui/fail/resource_too_many_fields.rs:4:8
+  |
+4 | struct Wide {
+  |        ^^^^

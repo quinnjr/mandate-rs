@@ -15,7 +15,7 @@ pub mod value;
 pub use field::{Field, FieldRef, Opaque, Rel};
 pub use fieldset::{FieldMask, FieldSet};
 #[cfg(feature = "derive")]
-pub use mandate_derive::IntoValue;
+pub use mandate_derive::{IntoValue, Resource};
 pub use relation::{Cardinality, DynMany, RelationRef, RelationSlot, ResourcePtr, ToMany, ToOne};
 pub use scalar::{
     IntoValue, NonNull, Nullability, Nullable, Ordered, Scalar, ScalarValue, Textual,
@@ -25,3 +25,9 @@ pub use traits::{DynResource, LoadState, Resource};
 #[cfg(feature = "chrono")]
 pub use value::truncate_micros;
 pub use value::{Value, ValueRef};
+
+#[cfg(all(test, feature = "derive", feature = "chrono", feature = "uuid"))]
+#[allow(dead_code, unused_imports)]
+pub(crate) mod test_fixture {
+    include!("../tests/common/fixture.rs");
+}
