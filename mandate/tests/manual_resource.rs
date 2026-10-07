@@ -97,7 +97,11 @@ fn vec_slot_many() {
     match n.relation(FieldIdx(1)) {
         RelationRef::Many(m) => {
             assert_eq!(m.len(), 2);
-            assert_eq!(m.get(1).value(FieldIdx(0)), ValueRef::Int(2));
+            assert_eq!(
+                m.get(1).map(|d| d.value(FieldIdx(0))),
+                Some(ValueRef::Int(2))
+            );
+            assert!(m.get(2).is_none());
         }
         _ => panic!("expected Many"),
     }

@@ -60,9 +60,8 @@ pub trait DynMany {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    /// The `i`-th related resource. Callers must pass `i < len()`; an
-    /// out-of-range index panics (the signature admits no other outcome).
-    fn get(&self, i: usize) -> &dyn DynResource;
+    /// The `i`-th related resource, or `None` if `i` is out of range.
+    fn get(&self, i: usize) -> Option<&dyn DynResource>;
 }
 
 impl<T: Resource> ResourcePtr for Box<T> {
@@ -106,7 +105,7 @@ impl<P: ResourcePtr> DynMany for Vec<P> {
     fn len(&self) -> usize {
         Vec::len(self)
     }
-    fn get(&self, i: usize) -> &dyn DynResource {
-        self[i].target().as_dyn()
+    fn get(&self, i: usize) -> Option<&dyn DynResource> {
+        <[P]>::get(self, i).map(|p| p.target().as_dyn())
     }
 }
