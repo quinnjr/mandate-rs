@@ -1,0 +1,15 @@
+[package]
+name = "mandate-derive"
+version = "0.1.0"
+description = "Derive macros for mandate-rs"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
