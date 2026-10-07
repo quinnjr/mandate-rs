@@ -154,3 +154,34 @@ pub struct TTag {
     pub id: i64,
     pub name: Option<String>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, mandate::Action)]
+pub enum Action {
+    Read,
+    Create,
+    Update,
+    Delete,
+    #[action(manage)]
+    Manage,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, mandate::Subject)]
+pub enum Subject {
+    #[subject(resource = Post)]
+    Post,
+    #[subject(resource = Org)]
+    Org,
+    #[subject(resource = Marker)]
+    Marker,
+    Dashboard,
+    #[subject(all)]
+    All,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, mandate::Subject)]
+pub enum TSubject {
+    #[subject(resource = TPost)]
+    TPost,
+    #[subject(resource = TOrg)]
+    TOrg,
+}

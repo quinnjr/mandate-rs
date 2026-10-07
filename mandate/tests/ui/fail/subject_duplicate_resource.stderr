@@ -1,0 +1,10 @@
+error[E0119]: conflicting implementations of trait `SubjectResource<S>` for type `fixture::Post`
+ --> tests/ui/fail/subject_duplicate_resource.rs:5:45
+  |
+5 | #[derive(Clone, Copy, Debug, PartialEq, Eq, mandate::Subject)]
+  |                                             ^^^^^^^^^^^^^^^^
+  |                                             |
+  |                                             first implementation here
+  |                                             conflicting implementation for `fixture::Post`
+  |
+  = note: this error originates in the derive macro `mandate::Subject` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,0 +1,5 @@
+error: `Action` variants must be unit variants
+ --> tests/ui/fail/action_tuple_variant.rs:3:5
+  |
+3 |     Read(u8),
+  |     ^^^^^^^^

@@ -15,13 +15,13 @@ pub mod value;
 pub use field::{Field, FieldRef, Opaque, Rel};
 pub use fieldset::{FieldMask, FieldSet};
 #[cfg(feature = "derive")]
-pub use mandate_derive::{IntoValue, Resource};
+pub use mandate_derive::{Action, IntoValue, Resource, Subject};
 pub use relation::{Cardinality, DynMany, RelationRef, RelationSlot, ResourcePtr, ToMany, ToOne};
 pub use scalar::{
     IntoValue, NonNull, Nullability, Nullable, Ordered, Scalar, ScalarValue, Textual,
 };
 pub use schema::{CardinalityKind, FieldDef, FieldIdx, FieldKind, Kind, MAX_FIELDS, Schema};
-pub use traits::{DynResource, LoadState, Resource};
+pub use traits::{Action, DynResource, LoadState, Resource, Subject, SubjectResource};
 #[cfg(feature = "chrono")]
 pub use value::truncate_micros;
 pub use value::{Value, ValueRef};
