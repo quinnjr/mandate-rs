@@ -15,3 +15,5 @@ pub use schema::{CardinalityKind, FieldDef, FieldIdx, FieldKind, Kind, MAX_FIELD
 #[cfg(feature = "chrono")]
 pub use value::truncate_micros;
 pub use value::{Value, ValueRef};
+#[cfg(feature = "derive")]
+pub use mandate_derive::IntoValue;
