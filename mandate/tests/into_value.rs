@@ -33,12 +33,18 @@ fn variants_follow_serde_naming() {
 #[test]
 fn names_match_serde_output() {
     for s in [Status::Draft, Status::Published, Status::Archived] {
-        assert_eq!(serde_json::to_value(s).unwrap(), serde_json::json!(s.variant_name()));
+        assert_eq!(
+            serde_json::to_value(s).unwrap(),
+            serde_json::json!(s.variant_name())
+        );
     }
 }
 #[test]
 fn enum_is_scalar() {
-    assert_eq!(<Status as ScalarValue>::KIND, Kind::Enum(&["draft", "published", "archived"]));
+    assert_eq!(
+        <Status as ScalarValue>::KIND,
+        Kind::Enum(&["draft", "published", "archived"])
+    );
     assert_eq!(Scalar::value_ref(&Status::Draft), ValueRef::Str("draft"));
     assert!(<<Option<Status> as Scalar>::Nullability as Nullability>::NULLABLE);
 }
