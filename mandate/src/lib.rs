@@ -4,6 +4,7 @@
 
 extern crate self as mandate;
 
+pub mod condition;
 pub mod field;
 pub mod fieldset;
 pub mod relation;
@@ -12,6 +13,7 @@ pub mod schema;
 pub mod traits;
 pub mod value;
 
+pub use condition::{CmpOp, Cond, Condition, Quant, StrOp};
 pub use field::{Field, FieldRef, Opaque, Rel};
 pub use fieldset::{FieldMask, FieldSet};
 #[cfg(feature = "derive")]

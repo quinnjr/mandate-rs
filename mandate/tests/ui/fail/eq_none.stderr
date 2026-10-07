@@ -1,0 +1,22 @@
+error[E0277]: the trait bound `i64: From<std::option::Option<_>>` is not satisfied
+ --> tests/ui/fail/eq_none.rs:7:34
+  |
+7 |     let _ = Post::REVIEWER_ID.eq(None);
+  |                               -- ^^^^ the trait `From<std::option::Option<_>>` is not implemented for `i64`
+  |                               |
+  |                               required by a bound introduced by this call
+  |
+  = help: `i64` implements trait `From<T>`:
+            From<bool>
+            From<i16>
+            From<i32>
+            From<i8>
+            From<u16>
+            From<u32>
+            From<u8>
+  = note: required for `std::option::Option<_>` to implement `Into<i64>`
+note: required by a bound in `condition::cond::<impl mandate::Field<R, T>>::eq`
+ --> src/condition/cond.rs
+  |
+  |     pub fn eq(self, v: impl Into<T::Inner>) -> Cond<R> {
+  |                             ^^^^^^^^^^^^^^ required by this bound in `condition::cond::<impl Field<R, T>>::eq`

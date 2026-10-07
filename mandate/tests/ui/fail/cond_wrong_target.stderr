@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+ --> tests/ui/fail/cond_wrong_target.rs:7:28
+  |
+7 |     let _ = Post::ORG.then(Tag::ID.eq(1));
+  |                       ---- ^^^^^^^^^^^^^ expected `Cond<Org>`, found `Cond<Tag>`
+  |                       |
+  |                       arguments to this method are incorrect
+  |
+  = note: expected struct `Cond<Org>`
+             found struct `Cond<fixture::Tag>`
+note: method defined here
+ --> src/condition/cond.rs
+  |
+  |     pub fn then(self, c: Cond<T::Target>) -> Cond<R>
+  |            ^^^^

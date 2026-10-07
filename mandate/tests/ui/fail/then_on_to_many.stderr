@@ -1,0 +1,14 @@
+error[E0271]: type mismatch resolving `<Vec<Tag> as RelationSlot>::Cardinality == ToOne`
+ --> tests/ui/fail/then_on_to_many.rs:7:24
+  |
+7 |     let _ = Post::TAGS.then(Tag::ID.eq(1));
+  |                        ^^^^ expected `ToOne`, found `ToMany`
+  |
+note: required by a bound in `condition::cond::<impl mandate::Rel<R, T>>::then`
+ --> src/condition/cond.rs
+  |
+  |     pub fn then(self, c: Cond<T::Target>) -> Cond<R>
+  |            ---- required by a bound in this associated function
+  |     where
+  |         T: RelationSlot<Cardinality = ToOne>,
+  |                         ^^^^^^^^^^^^^^^^^^^ required by this bound in `condition::cond::<impl Rel<R, T>>::then`
