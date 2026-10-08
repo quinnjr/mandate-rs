@@ -324,6 +324,28 @@ fn mixed_rules_agree_with_can() {
 }
 
 #[test]
+fn many_rules_on_a_small_stack() {
+    // One `can` rule per shared record: the formula must not nest per rule.
+    // 2 MiB is a Tokio worker's default stack.
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            let mut g = Ab::builder()
+                .can(Action::Read, Subject::Post)
+                .when(Post::ID.eq(0));
+            for i in 1..10_000 {
+                g = g.can(Action::Read, Subject::Post).when(Post::ID.eq(i));
+            }
+            let a = g.build().unwrap();
+            let posts = [0, 9_999, 10_000].map(|id| Post { id, ..post() });
+            assert_agrees(&a, &posts);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn plan_shape_invariants() {
     for a in [
         formula_ability(),

@@ -201,16 +201,10 @@ impl<A: Action, S: Subject> Ability<A, S> {
     pub fn access<R: SubjectResource<S>>(&self, action: A) -> Result<Access<R>, EvalError> {
         Self::guard::<R>()?;
         let schema = R::schema();
-        // The §7.6 formula; an unconditional rule's `true` resets `f`.
-        let mut f = Condition::Or(vec![]);
-        for rule in self.applicable(action, R::SUBJECT, None) {
-            let c = rule.condition().cloned().unwrap_or(Condition::And(vec![]));
-            f = if rule.inverted() {
-                Condition::And(vec![Condition::Not(Box::new(c)), f])
-            } else {
-                Condition::Or(vec![c, f])
-            };
-        }
+        let f = formula(
+            self.applicable(action, R::SUBJECT, None)
+                .map(|r| (r.inverted(), r.condition())),
+        );
         let restricted = match fold(f, schema) {
             Folded::Cond(c) => fold(nnf(c, schema), schema),
             constant => constant,
@@ -252,10 +246,60 @@ impl<A: Action, S: Subject> Ability<A, S> {
     }
 }
 
+/// The §7.6 formula over `(inverted, condition)` rules in definition order:
+/// from `f = false`, `can c` gives `f = c ∨ f` and `cannot c` gives
+/// `f = ¬c ∧ f`, where `c = true` for an unconditional rule.
+///
+/// A run of like rules `c1..ck` is built as one group, `Or[ck, …, c1, f]` or
+/// `And[¬ck, …, ¬c1, f]`, which folds exactly as nesting them one by one, so
+/// the depth grows with the alternations between `can` and `cannot`, not with
+/// the number of rules. An unconditional rule decides everything before it,
+/// so it resets `f` to its constant.
+fn formula<'r>(rules: impl IntoIterator<Item = (bool, Option<&'r Condition>)>) -> Condition {
+    /// Closes the run `cs` (in definition order) over `f`.
+    fn close(mut cs: Vec<Condition>, inverted: bool, f: Condition) -> Condition {
+        if cs.is_empty() {
+            return f;
+        }
+        cs.reverse();
+        cs.push(f);
+        if inverted {
+            Condition::And(cs)
+        } else {
+            Condition::Or(cs)
+        }
+    }
+
+    let mut f = Condition::Or(vec![]);
+    let (mut run, mut run_inverted) = (Vec::new(), false);
+    for (inverted, c) in rules {
+        if inverted != run_inverted {
+            f = close(core::mem::take(&mut run), run_inverted, f);
+            run_inverted = inverted;
+        }
+        match c {
+            // `true ∨ f` is true and `¬true ∧ f` is false.
+            None => {
+                run.clear();
+                f = if inverted {
+                    Condition::Or(vec![])
+                } else {
+                    Condition::And(vec![])
+                };
+            }
+            Some(c) if inverted => run.push(Condition::Not(Box::new(c.clone()))),
+            Some(c) => run.push(c.clone()),
+        }
+    }
+    close(run, run_inverted, f)
+}
+
 #[cfg(all(test, feature = "derive", feature = "chrono", feature = "uuid"))]
 mod tests {
-    use crate::Ability;
-    use crate::test_fixture::{Action, Subject};
+    use super::formula;
+    use crate::condition::fold::fold;
+    use crate::test_fixture::{Action, Post, Subject};
+    use crate::{Ability, Condition, Resource};
 
     #[test]
     fn index_expands_wildcards() {
@@ -267,5 +311,62 @@ mod tests {
         assert_eq!(a.cell(Action::Read, Subject::Post), [0, 1]);
         assert_eq!(a.cell(Action::Delete, Subject::Org), [0]);
         assert_eq!(a.cell(Action::Manage, Subject::Post), [0]);
+    }
+
+    /// A rule: whether it is a `cannot`, and its condition.
+    type R = (bool, Option<Condition>);
+
+    /// The §7.6 formula as written: one nesting level per rule.
+    fn nested(rules: &[R]) -> Condition {
+        let mut f = Condition::Or(vec![]);
+        for (inverted, c) in rules {
+            let c = c.clone().unwrap_or(Condition::And(vec![]));
+            f = if *inverted {
+                Condition::And(vec![Condition::Not(Box::new(c)), f])
+            } else {
+                Condition::Or(vec![c, f])
+            };
+        }
+        f
+    }
+
+    #[test]
+    fn formula_folds_like_per_rule_nesting() {
+        let a = Post::AUTHOR_ID.eq(7).into_condition();
+        let b = Post::LOCKED.eq(true).into_condition();
+        let kinds: [R; 8] = [
+            (false, None),
+            (true, None),
+            (false, Some(a.clone())),
+            (false, Some(b.clone())),
+            (false, Some(Condition::Or(vec![a.clone(), b.clone()]))),
+            (true, Some(a.clone())),
+            (true, Some(b.clone())),
+            (true, Some(Condition::And(vec![a, b]))),
+        ];
+        // Every sequence of up to four rules.
+        let mut level: Vec<Vec<R>> = vec![vec![]];
+        let mut all = level.clone();
+        for _ in 0..4 {
+            level = level
+                .iter()
+                .flat_map(|seq| {
+                    kinds.iter().map(|k| {
+                        let mut seq = seq.clone();
+                        seq.push(k.clone());
+                        seq
+                    })
+                })
+                .collect();
+            all.extend(level.iter().cloned());
+        }
+        for seq in all {
+            let coalesced = formula(seq.iter().map(|(inverted, c)| (*inverted, c.as_ref())));
+            assert_eq!(
+                fold(coalesced, Post::schema()),
+                fold(nested(&seq), Post::schema()),
+                "{seq:?}"
+            );
+        }
     }
 }
