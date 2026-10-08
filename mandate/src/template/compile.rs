@@ -37,6 +37,7 @@
 //!   `$`-key such as `$some` is `UnknownOperator`, as in any condition object;
 //!   `UnknownKey` is for to-many relation objects.
 
+use crate::condition::validate::{self, Misuse, Use};
 use crate::{
     Action, CardinalityKind, CmpOp, FieldIdx, FieldKind, FieldMask, Kind, LoadError, LoadErrorKind,
     OneOrMany, Quant, RuleTemplate, Schema, StrOp, Subject, TemplateValue, Value,
@@ -354,6 +355,24 @@ impl Compiler<'_> {
         self.err(path, LoadErrorKind::Malformed(reason.into()))
     }
 
+    /// The error for a field use that [`validate::check`] rejects; `op` is
+    /// the template operator, if any.
+    fn misuse(&self, path: &str, op: &str, m: Misuse) -> LoadError {
+        match m {
+            Misuse::Operator(_, kind) => self.err(
+                path,
+                LoadErrorKind::OperatorNotAllowed {
+                    op: op.to_owned(),
+                    kind,
+                },
+            ),
+            Misuse::NotNullable => self.err(path, LoadErrorKind::NullNotAllowed),
+            Misuse::Opaque | Misuse::Relation | Misuse::NotRelation | Misuse::Quantifier(..) => {
+                self.malformed(path, m.to_string())
+            }
+        }
+    }
+
     /// A condition object over `schema`: field keys and `$and`/`$or`/`$not`,
     /// AND-ed in key order. `negative` is the polarity of its position.
     fn object(
@@ -437,16 +456,7 @@ impl Compiler<'_> {
                 target,
                 cardinality,
                 nullable,
-            } => self.relation(
-                idx,
-                target(),
-                cardinality,
-                nullable,
-                v,
-                path,
-                depth,
-                negative,
-            ),
+            } => self.relation(idx, target, cardinality, nullable, v, path, depth, negative),
         }
     }
 
@@ -486,18 +496,13 @@ impl Compiler<'_> {
         path: &str,
         negative: bool,
     ) -> Result<TCond, LoadError> {
-        let not_allowed = || {
-            self.err(
-                path,
-                LoadErrorKind::OperatorNotAllowed {
-                    op: op.to_owned(),
-                    kind,
-                },
-            )
-        };
+        let def = FieldKind::Scalar { kind, nullable };
+        // The operator's use of the field, checked by the rules `build()`
+        // applies to code-built conditions.
+        let check = |u| validate::check(def, u).map_err(|m| self.misuse(path, op, m));
         match op {
             "$eq" | "$ne" if matches!(v, TemplateValue::Null) => {
-                self.null_test(field, nullable, op == "$eq", path)
+                self.null_test(field, def, op == "$eq", path)
             }
             "$eq" | "$ne" | "$lt" | "$lte" | "$gt" | "$gte" => {
                 let cmp = match op {
@@ -508,12 +513,7 @@ impl Compiler<'_> {
                     "$gt" => CmpOp::Gt,
                     _ => CmpOp::Gte,
                 };
-                // Ordering is defined on ordered kinds only; the filter-plan
-                // rewrite of a negated ordering relies on it.
-                let ordered = matches!(kind, Kind::Int | Kind::Float | Kind::DateTime | Kind::Date);
-                if !matches!(cmp, CmpOp::Eq | CmpOp::Ne) && !ordered {
-                    return Err(not_allowed());
-                }
+                check(Use::Cmp(cmp))?;
                 Ok(TCond::Cmp {
                     field,
                     op: cmp,
@@ -521,31 +521,35 @@ impl Compiler<'_> {
                 })
             }
             "$contains" | "$startsWith" | "$endsWith" => {
-                if kind != Kind::String {
-                    return Err(not_allowed());
-                }
                 let text_op = match op {
                     "$contains" => StrOp::Contains,
                     "$startsWith" => StrOp::StartsWith,
                     _ => StrOp::EndsWith,
                 };
+                check(Use::Str(text_op))?;
                 Ok(TCond::Str {
                     field,
                     op: text_op,
                     value: self.operand(kind, v, path, negative)?,
                 })
             }
-            "$in" => Ok(TCond::In {
-                field,
-                values: self.list(kind, v, path, negative)?,
-            }),
-            "$nin" => Ok(TCond::NotIn {
-                field,
-                values: self.list(kind, v, path, negative)?,
-            }),
+            "$in" => {
+                check(Use::List)?;
+                Ok(TCond::In {
+                    field,
+                    values: self.list(kind, v, path, negative)?,
+                })
+            }
+            "$nin" => {
+                check(Use::List)?;
+                Ok(TCond::NotIn {
+                    field,
+                    values: self.list(kind, v, path, negative)?,
+                })
+            }
             "$isNull" => {
                 let null = self.flag(v, path)?;
-                self.null_test(field, nullable, null, path)
+                self.null_test(field, def, null, path)
             }
             _ => Err(self.err(path, LoadErrorKind::UnknownOperator(op.to_owned()))),
         }
@@ -556,7 +560,7 @@ impl Compiler<'_> {
     fn relation(
         &mut self,
         relation: FieldIdx,
-        target: &'static Schema,
+        target: fn() -> &'static Schema,
         cardinality: CardinalityKind,
         nullable: bool,
         v: &TemplateValue,
@@ -564,11 +568,16 @@ impl Compiler<'_> {
         depth: usize,
         negative: bool,
     ) -> Result<TCond, LoadError> {
+        let def = FieldKind::Relation {
+            target,
+            cardinality,
+            nullable,
+        };
+        let target = target();
         let to_one = cardinality == CardinalityKind::ToOne;
         let entries = match v {
             TemplateValue::Object(entries) => entries,
-            TemplateValue::Null if to_one => return self.null_test(relation, nullable, true, path),
-            TemplateValue::Null => return Err(self.err(path, LoadErrorKind::NullNotAllowed)),
+            TemplateValue::Null => return self.null_test(relation, def, true, path),
             _ => {
                 let expected = if to_one {
                     "null or an object"
@@ -581,16 +590,11 @@ impl Compiler<'_> {
                 ));
             }
         };
-        let rel = |quant, cond| TCond::Rel {
-            relation,
-            quant,
-            cond: Box::new(cond),
-        };
         if to_one {
             if !entries.iter().any(|(k, _)| k == "$isNull" || k == "$none") {
                 // A condition scoped to the target.
                 let cond = self.object(v, target, path, depth + 1, negative)?;
-                return Ok(rel(Quant::One, cond));
+                return self.rel(relation, def, Quant::One, cond, path);
             }
             let [(key, value)] = entries.as_slice() else {
                 return Err(self.err(path, LoadErrorKind::MixedRelationObject));
@@ -598,10 +602,10 @@ impl Compiler<'_> {
             let path = format!("{path}.{key}");
             if key == "$isNull" {
                 let null = self.flag(value, &path)?;
-                return self.null_test(relation, nullable, null, &path);
+                return self.null_test(relation, def, null, &path);
             }
             let cond = self.object(value, target, &path, depth + 1, !negative)?;
-            return Ok(rel(Quant::None, cond));
+            return self.rel(relation, def, Quant::None, cond, &path);
         }
         if let Some((key, _)) = entries
             .iter()
@@ -627,23 +631,44 @@ impl Compiler<'_> {
             "$every" => (Quant::Every, negative),
             _ => (Quant::None, !negative),
         };
-        let cond = self.object(value, target, &format!("{path}.{key}"), depth + 1, negative)?;
-        Ok(rel(quant, cond))
+        let path = format!("{path}.{key}");
+        let cond = self.object(value, target, &path, depth + 1, negative)?;
+        self.rel(relation, def, quant, cond, &path)
+    }
+
+    /// `Rel{quant, cond}` on `relation`. The quantifier always fits the
+    /// cardinality here (the keys allowed depend on it); it is checked by
+    /// the rules `build()` applies to code-built conditions all the same.
+    fn rel(
+        &self,
+        relation: FieldIdx,
+        def: FieldKind,
+        quant: Quant,
+        cond: TCond,
+        path: &str,
+    ) -> Result<TCond, LoadError> {
+        validate::check(def, Use::Rel(quant)).map_err(|m| self.misuse(path, "", m))?;
+        Ok(TCond::Rel {
+            relation,
+            quant,
+            cond: Box::new(cond),
+        })
     }
 
     /// `IsNull` (`null`) or `IsNotNull` on a nullable scalar or to-one relation.
     fn null_test(
         &self,
         field: FieldIdx,
-        nullable: bool,
+        def: FieldKind,
         null: bool,
         path: &str,
     ) -> Result<TCond, LoadError> {
-        match (nullable, null) {
-            (false, _) => Err(self.err(path, LoadErrorKind::NullNotAllowed)),
-            (true, true) => Ok(TCond::IsNull(field)),
-            (true, false) => Ok(TCond::IsNotNull(field)),
-        }
+        validate::check(def, Use::NullTest).map_err(|m| self.misuse(path, "", m))?;
+        Ok(if null {
+            TCond::IsNull(field)
+        } else {
+            TCond::IsNotNull(field)
+        })
     }
 
     /// The literal boolean operand of `$isNull`.

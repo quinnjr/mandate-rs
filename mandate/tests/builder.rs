@@ -1,7 +1,7 @@
 #![cfg(all(feature = "derive", feature = "chrono", feature = "uuid"))]
 mod common;
 use common::fixture::*;
-use mandate::{BuildError, Cond, FieldIdx, FieldRef};
+use mandate::{BuildError, Cond, Field, FieldIdx, FieldRef, Rel};
 
 type Ab = mandate::Ability<Action, Subject>;
 
@@ -179,6 +179,126 @@ fn invalid_parts_are_not_folded_away() {
             .build(),
         Err(BuildError::InvalidValue { .. })
     ));
+}
+
+/// The path and reason of the `InvalidField` error of `can read Post when c`.
+fn invalid(c: Cond<Post>) -> (String, String) {
+    match Ab::builder()
+        .can(Action::Read, Subject::Post)
+        .when(c)
+        .build()
+    {
+        Err(BuildError::InvalidField {
+            subject: "Post",
+            path,
+            reason,
+        }) => (path, reason),
+        other => panic!("expected InvalidField, got {other:?}"),
+    }
+}
+
+#[test]
+fn hand_built_handles_are_checked_against_the_schema() {
+    let cases: Vec<(Cond<Post>, &str, &str)> = vec![
+        // An `i64` handle on the `String` title.
+        (
+            Field::<Post, i64>::new(3).lt(5),
+            "title",
+            "`Lt` is not allowed on String",
+        ),
+        (Field::<Post, i64>::new(3).eq(5), "title", "does not fit"),
+        (
+            Field::<Post, i64>::new(200).eq(1),
+            "#200",
+            "no field with index 200",
+        ),
+        (
+            Field::<Post, String>::new(6).eq("deleted"),
+            "status",
+            "does not fit",
+        ),
+        (
+            Field::<Post, String>::new(6).contains("x"),
+            "status",
+            "`Contains` is not allowed on Enum",
+        ),
+        (
+            Field::<Post, Option<i64>>::new(1).is_null(),
+            "author_id",
+            "nullable",
+        ),
+        (Field::<Post, String>::new(12).eq("x"), "metadata", "opaque"),
+        (Field::<Post, i64>::new(9).eq(1), "org", "only quantifiers"),
+        (
+            Rel::<Post, Vec<Tag>>::new(9).some(Tag::ID.eq(1)),
+            "org",
+            "`Some` does not fit a ToOne relation",
+        ),
+        (
+            Rel::<Post, Org>::new(3).then(Org::ID.eq(1)),
+            "title",
+            "needs a relation",
+        ),
+        (
+            Rel::<Post, Option<User>>::new(9).is_null(),
+            "org",
+            "nullable",
+        ),
+        // Inside relations, against the target's schema.
+        (
+            Post::ORG.then(Field::<Org, i64>::new(5).eq(1)),
+            "org.#5",
+            "`Org` has no field with index 5",
+        ),
+        (
+            Post::ORG.then(Field::<Org, i64>::new(1).gt(1)),
+            "org.name",
+            "`Gt` is not allowed on String",
+        ),
+        (
+            Post::TAGS.some(Field::<Tag, i64>::new(1).eq(1)),
+            "tags.name",
+            "does not fit",
+        ),
+        // Inside groups and negations.
+        (
+            !(Post::ID.eq(1).and(Field::<Post, i64>::new(3).eq(5))),
+            "title",
+            "does not fit",
+        ),
+    ];
+    for (c, path, reason) in cases {
+        let shown = format!("{c:?}");
+        let (p, r) = invalid(c);
+        assert_eq!(p, path, "{shown}");
+        assert!(r.contains(reason), "{shown}: {r}");
+    }
+    // Hand-built handles that match the schema are fine.
+    assert!(
+        Ab::builder()
+            .can(Action::Read, Subject::Post)
+            .when(Field::<Post, i64>::new(1).gte(7))
+            .when(Rel::<Post, Option<User>>::new(10).is_null())
+            .fields([FieldRef::<Post>::new(12)])
+            .build()
+            .is_ok()
+    );
+}
+
+#[test]
+fn hand_built_field_lists_are_checked_against_the_schema() {
+    assert_eq!(
+        Ab::builder()
+            .can(Action::Read, Subject::Post)
+            .fields([Post::TITLE.into(), FieldRef::new(13)])
+            .build()
+            .unwrap_err(),
+        BuildError::InvalidField {
+            subject: "Post",
+            path: "#13".into(),
+            reason: "`Post` has no field with index 13".into(),
+        }
+    );
 }
 
 #[test]

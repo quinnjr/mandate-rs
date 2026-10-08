@@ -59,6 +59,31 @@ pub enum BuildError {
         /// Which list: `"actions"`, `"subjects"`, or `"fields"`.
         what: &'static str,
     },
+    /// A code-built condition or field list uses a field in a way its schema
+    /// does not allow.
+    ///
+    /// The derived handles cannot express this; it catches handles built by
+    /// hand with the `const` constructors ([`Field::new`](crate::Field::new)
+    /// and the like) whose index or type does not match the schema. The
+    /// rules are those [`Templates::compile`](crate::Templates::compile)
+    /// enforces: the field exists; ordering only on `Int`, `Float`,
+    /// `DateTime` and `Date` fields, text operators only on `String` fields,
+    /// operands of the field's kind (enum operands among its variants);
+    /// null tests only on nullable scalars and nullable to-one relations;
+    /// `then` only on to-one and `some`/`every` only on to-many relations;
+    /// quantifiers only on relations, scalar operators only on scalars, and
+    /// no condition on an opaque field.
+    #[error("invalid use of field `{path}` on subject `{subject}`: {reason}")]
+    InvalidField {
+        /// Name of the rule's subject.
+        subject: &'static str,
+        /// Dotted path to the field from the subject, through the relations
+        /// the condition follows (e.g. `org.name`); a field index the schema
+        /// does not have is written `#<index>` (e.g. `org.#5`).
+        path: String,
+        /// What is wrong.
+        reason: String,
+    },
     /// A condition holds a value that can never be compared (non-finite float).
     #[error("invalid value: {reason}")]
     InvalidValue {

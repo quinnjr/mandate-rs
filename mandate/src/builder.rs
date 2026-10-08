@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 use crate::condition::fold::{Folded, fold};
+use crate::condition::validate;
 use crate::{
     Ability, Action, Bound, BuildError, Cond, Condition, FieldIdx, FieldMask, FieldRef, Resource,
     Rule, Schema, Subject,
@@ -282,16 +283,22 @@ fn resolve<A: Action, S: Subject>(
     }
     let first = g.subjects[0];
 
-    if !g.fields.is_empty() {
-        for (_, fs) in &g.fields {
-            for s in &g.subjects {
-                if !s.schema().is_some_and(|ss| std::ptr::eq(ss, *fs)) {
-                    return Err(BuildError::ForeignField {
-                        subject: s.name(),
-                        field_schema: fs.name(),
-                    });
-                }
+    for (listed, fs) in &g.fields {
+        for s in &g.subjects {
+            if !s.schema().is_some_and(|ss| std::ptr::eq(ss, *fs)) {
+                return Err(BuildError::ForeignField {
+                    subject: s.name(),
+                    field_schema: fs.name(),
+                });
             }
+        }
+        // Hand-built handles may point past the schema.
+        if let Some(i) = listed.iter().find(|i| fs.field(**i).is_none()) {
+            return Err(BuildError::InvalidField {
+                subject: first.name(),
+                path: format!("#{}", i.0),
+                reason: format!("`{}` has no field with index {}", fs.name(), i.0),
+            });
         }
     }
     let mask = (!g.fields.is_empty()).then(|| {
@@ -322,6 +329,11 @@ fn resolve<A: Action, S: Subject>(
             });
         }
         check_depth(c, first.name())?;
+        validate::fields(c, subject_schema).map_err(|e| BuildError::InvalidField {
+            subject: first.name(),
+            path: e.path,
+            reason: e.reason,
+        })?;
         check_finite(c)?;
     }
     let mut conds: Vec<Condition> = std::mem::take(&mut g.conds)
