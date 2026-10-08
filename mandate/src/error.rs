@@ -9,6 +9,7 @@ use crate::{Action, Kind, Subject};
 /// Evaluation fails closed: neither case is ever coerced to `false`, since
 /// that could make a `cannot` rule silently stop applying.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum EvalError {
     /// A field or relation the condition reads is not loaded.
     #[error("`{path}` is not loaded")]
@@ -28,6 +29,7 @@ pub enum EvalError {
 
 /// Why a rule set could not be built.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
+#[non_exhaustive]
 pub enum BuildError {
     /// A condition was built for a different resource than the rule's subject.
     #[error("condition on `{condition_schema}` does not match subject `{subject}`")]
@@ -141,6 +143,7 @@ pub struct LoadError {
 
 /// What is wrong with a rule template (see [`LoadError`]).
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum LoadErrorKind {
     /// No action has this name.
     #[error("unknown action `{0}`")]
@@ -229,6 +232,7 @@ pub struct BindError {
 ///
 /// Values are checked as template literals are at compile time.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum BindErrorKind {
     /// A value of the wrong JSON type for the field's kind, including an
     /// array for a scalar placeholder or a non-array for a list placeholder
@@ -265,6 +269,7 @@ pub struct Unresolved {
 
 /// What binding did about an [`Unresolved`] placeholder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UnresolvedOutcome {
     /// The placeholder is optional (`${…?}`): its rule was dropped.
     RuleDropped,
@@ -306,6 +311,7 @@ impl<A: Action, S: Subject> std::error::Error for Forbidden<A, S> {}
 
 /// Why a `check*` call did not succeed.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum CheckError<A, S> {
     /// The rules deny the action.
     Forbidden(Forbidden<A, S>),

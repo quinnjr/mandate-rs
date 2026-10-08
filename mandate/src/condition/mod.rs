@@ -15,6 +15,7 @@ use crate::{FieldIdx, Value};
 
 /// Comparison operator of a [`Condition::Cmp`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub enum CmpOp {
     /// Equal.
     Eq,
@@ -32,6 +33,7 @@ pub enum CmpOp {
 
 /// Text operator of a [`Condition::Str`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub enum StrOp {
     /// Contains the substring.
     Contains,
@@ -43,6 +45,7 @@ pub enum StrOp {
 
 /// Quantifier of a [`Condition::Rel`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub enum Quant {
     /// The to-one target matches.
     One,
@@ -59,6 +62,7 @@ pub enum Quant {
 /// Field indices are relative to the schema in scope; inside
 /// [`Condition::Rel`] they refer to the relation target's schema.
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[non_exhaustive]
 pub enum Condition {
     /// Compares a scalar field with a value.
     Cmp {

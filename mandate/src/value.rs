@@ -10,6 +10,7 @@ use chrono::{DateTime, NaiveDate, Timelike, Utc};
 /// An owned dynamic scalar value.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum Value {
     /// Boolean.
     Bool(bool),
@@ -60,6 +61,7 @@ impl Value {
 
 /// A borrowed view of a field value read from an entity.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum ValueRef<'a> {
     /// Null.
     Null,

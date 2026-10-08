@@ -181,6 +181,7 @@ mod model {
                     CmpOp::Lte => matches!(order(&v, value), Some(Less | Equal)),
                     CmpOp::Gt => order(&v, value) == Some(Greater),
                     CmpOp::Gte => matches!(order(&v, value), Some(Greater | Equal)),
+                    op => unreachable!("unknown operator {op:?}"),
                 }
             }
             Condition::In { field, values } => {
@@ -196,6 +197,7 @@ mod model {
                     StrOp::Contains => s.contains(value.as_str()),
                     StrOp::StartsWith => s.starts_with(value.as_str()),
                     StrOp::EndsWith => s.ends_with(value.as_str()),
+                    op => unreachable!("unknown operator {op:?}"),
                 },
                 Mv::Null => false,
                 _ => panic!("text operator on a non-text field"),
@@ -216,8 +218,10 @@ mod model {
                     Quant::One | Quant::Some => rows.iter().any(holds),
                     Quant::Every => rows.iter().all(holds),
                     Quant::None => !rows.iter().any(holds),
+                    q => unreachable!("unknown quantifier {q:?}"),
                 }
             }
+            c => unreachable!("unknown condition {c:?}"),
         }
     }
 
@@ -312,6 +316,7 @@ fn verdict(r: Result<(), CheckError<Action, TSubject>>) -> Result<bool, EvalErro
         Ok(()) => Ok(true),
         Err(CheckError::Forbidden(_)) => Ok(false),
         Err(CheckError::Unresolvable(e)) => Err(e),
+        Err(e) => unreachable!("unknown check error {e}"),
     }
 }
 

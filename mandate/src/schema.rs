@@ -11,6 +11,7 @@ pub struct FieldIdx(pub u16);
 
 /// The scalar kind of a field or value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Kind {
     /// Boolean.
     Bool,
@@ -32,6 +33,7 @@ pub enum Kind {
 
 /// Cardinality of a relation field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CardinalityKind {
     /// At most one related entity.
     ToOne,
@@ -41,6 +43,7 @@ pub enum CardinalityKind {
 
 /// What a field holds.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum FieldKind {
     /// A scalar value.
     Scalar {

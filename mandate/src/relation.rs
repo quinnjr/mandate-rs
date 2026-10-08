@@ -41,6 +41,7 @@ pub trait RelationSlot {
 }
 
 /// The runtime state of a relation slot.
+#[non_exhaustive]
 pub enum RelationRef<'a> {
     /// The relation is not loaded.
     NotLoaded,
