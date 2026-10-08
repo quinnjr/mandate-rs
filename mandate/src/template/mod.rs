@@ -1,5 +1,9 @@
 //! Serde data model for stored rule templates (database or config file form).
 
+mod compile;
+
+pub use compile::Templates;
+
 use std::collections::HashSet;
 use std::fmt;
 
