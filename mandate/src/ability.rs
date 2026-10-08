@@ -55,7 +55,19 @@ impl<A: Action, S: Subject> Ability<A, S> {
         &self.rules
     }
 
+    /// The position of cell `(a, s)` in `index`; `None` if either index is
+    /// out of range (only possible with an inconsistent hand-written
+    /// `Action`/`Subject` impl, which `build()` rejects).
+    fn slot(a: A, s: S) -> Option<usize> {
+        let (a, s) = (a.index(), s.index());
+        (a < A::COUNT && s < S::COUNT).then(|| s * A::COUNT + a)
+    }
+
     /// Indexes `rules`, expanding `MANAGE` and `ALL` into every cell they cover.
+    ///
+    /// `build()` has checked that `all()` and `index()` are consistent and
+    /// that every rule names listed values; a value with an index out of
+    /// range would be skipped (no check can reach its cell either).
     pub(crate) fn from_rules(rules: Vec<Rule<A, S>>) -> Self {
         let mut index = vec![Vec::new(); S::COUNT * A::COUNT];
         for (i, rule) in rules.iter().enumerate() {
@@ -72,16 +84,21 @@ impl<A: Action, S: Subject> Ability<A, S> {
             };
             for s in subjects {
                 for a in actions {
-                    index[s.index() * A::COUNT + a.index()].push(i as u32);
+                    if let Some(cell) = Self::slot(*a, *s).and_then(|k| index.get_mut(k)) {
+                        cell.push(i as u32);
+                    }
                 }
             }
         }
         Self { rules, index }
     }
 
-    /// Indices of the rules covering `(a, s)`, in definition order.
+    /// Indices of the rules covering `(a, s)`, in definition order. Empty
+    /// (so every check denies) for a value whose index is out of range.
     pub(crate) fn cell(&self, a: A, s: S) -> &[u32] {
-        &self.index[s.index() * A::COUNT + a.index()]
+        Self::slot(a, s)
+            .and_then(|k| self.index.get(k))
+            .map_or(&[], Vec::as_slice)
     }
 
     /// The first cell (subject-major, in `all()` order) whose rules switch

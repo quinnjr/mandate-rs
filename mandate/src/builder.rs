@@ -382,7 +382,38 @@ fn fold_bound<A: Action, S: Subject>(mut r: Rule<A, S>) -> Result<Option<Rule<A,
     })
 }
 
+/// Checks the dense index contract of a hand-written `Action`/`Subject`
+/// impl: `all` lists exactly `count` values, whose indices are `0..count`.
+fn check_dense<T: Copy>(
+    all: &[T],
+    count: usize,
+    index: impl Fn(T) -> usize,
+    which: &'static str,
+) -> Result<(), BuildError> {
+    let mut seen = vec![false; all.len()];
+    let dense = all.len() == count
+        && all.iter().all(|&v| match seen.get_mut(index(v)) {
+            Some(seen) if !*seen => {
+                *seen = true;
+                true
+            }
+            _ => false,
+        });
+    if dense {
+        Ok(())
+    } else {
+        Err(BuildError::InvalidEnum { which })
+    }
+}
+
+/// Whether `v` is the value `all` lists at its index (after [`check_dense`]).
+fn listed<T: Copy + PartialEq>(all: &[T], v: T, index: impl Fn(T) -> usize) -> bool {
+    all.get(index(v)) == Some(&v)
+}
+
 fn build<A: Action, S: Subject>(entries: Vec<Entry<A, S>>) -> Result<Ability<A, S>, BuildError> {
+    check_dense(A::all(), A::COUNT, A::index, "action")?;
+    check_dense(S::all(), S::COUNT, S::index, "subject")?;
     let mut rules = Vec::new();
     for entry in entries {
         let mut g = match entry {
@@ -408,6 +439,14 @@ fn build<A: Action, S: Subject>(entries: Vec<Entry<A, S>>) -> Result<Ability<A, 
                     g.reason.clone(),
                 ));
             }
+        }
+    }
+    for r in &rules {
+        if !listed(A::all(), r.action(), A::index) {
+            return Err(BuildError::InvalidEnum { which: "action" });
+        }
+        if !listed(S::all(), r.subject(), S::index) {
+            return Err(BuildError::InvalidEnum { which: "subject" });
         }
     }
     let ability = Ability::from_rules(rules);

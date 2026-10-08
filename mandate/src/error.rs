@@ -92,6 +92,18 @@ pub enum BuildError {
         /// What is wrong with the value.
         reason: String,
     },
+    /// A hand-written [`Action`](crate::Action) or
+    /// [`Subject`](crate::Subject) implementation breaks the dense index
+    /// contract: `all()` must list exactly `COUNT` values whose `index()`es
+    /// are `0..COUNT`, and rules may only name values `all()` lists. (The
+    /// derives always satisfy it.)
+    #[error(
+        "inconsistent {which} implementation: `all()` must list `COUNT` values indexed `0..COUNT`, and rules may only name listed values"
+    )]
+    InvalidEnum {
+        /// `"action"` or `"subject"`.
+        which: &'static str,
+    },
     /// The rules covering one (action, subject) pair switch between `can`
     /// and `cannot` more than 256 times.
     ///

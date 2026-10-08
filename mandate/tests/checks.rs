@@ -2,8 +2,8 @@
 mod common;
 use common::fixture::*;
 use mandate::{
-    Ability, CheckError, DynResource, EvalError, FieldDef, FieldIdx, Kind, RelationRef, Resource,
-    Schema, SubjectResource, ValueRef,
+    Ability, CheckError, DynResource, EvalError, FieldDef, FieldIdx, FieldRef, Kind, RelationRef,
+    Resource, Schema, SubjectResource, ValueRef,
 };
 
 type Ab = Ability<Action, Subject>;
@@ -240,4 +240,15 @@ fn schema_mismatch_guard() {
         a.permitted_fields(Action::Read, &Imposter).unwrap_err(),
         mismatch
     );
+    let id = FieldRef::<Imposter>::new(0);
+    assert!(!a.can_field(Action::Read, &Imposter, id));
+    assert_eq!(
+        a.check_field(Action::Read, &Imposter, id).unwrap_err(),
+        CheckError::Unresolvable(mismatch.clone())
+    );
+    assert_eq!(
+        a.projection::<Imposter>(Action::Read).err(),
+        Some(mismatch.clone())
+    );
+    assert_eq!(a.field_plan::<Imposter>(Action::Read).err(), Some(mismatch));
 }
