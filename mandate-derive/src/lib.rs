@@ -16,7 +16,9 @@ use syn::{DeriveInput, parse_macro_input};
 #[proc_macro_derive(IntoValue, attributes(value))]
 pub fn derive_into_value(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    into_value::expand(input).unwrap_or_else(syn::Error::into_compile_error).into()
+    into_value::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 /// Derives `Resource`, `DynResource`, `RelationSlot` and `ResourcePtr` for a
@@ -52,7 +54,9 @@ pub fn derive_resource(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(Action, attributes(action))]
 pub fn derive_action(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    action::expand(input).unwrap_or_else(syn::Error::into_compile_error).into()
+    action::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }
 
 /// Derives `Subject` for a unit-only enum.
@@ -65,5 +69,7 @@ pub fn derive_action(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(Subject, attributes(subject))]
 pub fn derive_subject(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    subject::expand(input).unwrap_or_else(syn::Error::into_compile_error).into()
+    subject::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
 }

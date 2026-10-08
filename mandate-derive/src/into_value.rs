@@ -89,7 +89,10 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         ));
     }
     let Data::Enum(data) = &input.data else {
-        return Err(Error::new(input.ident.span(), "`IntoValue` can only be derived for enums"));
+        return Err(Error::new(
+            input.ident.span(),
+            "`IntoValue` can only be derived for enums",
+        ));
     };
     let container = read_attrs(&input.attrs)?;
     let rule = container.rename_all.as_deref();
@@ -120,7 +123,10 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             ));
         }
         if names.contains(&name) {
-            return Err(Error::new(v.span(), format!("duplicate value name `{name}`")));
+            return Err(Error::new(
+                v.span(),
+                format!("duplicate value name `{name}`"),
+            ));
         }
         names.push(name);
         idents.push(&v.ident);
