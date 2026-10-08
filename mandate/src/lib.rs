@@ -201,22 +201,22 @@
 
 extern crate self as mandate;
 
-pub mod ability;
-pub mod builder;
-pub mod condition;
-pub mod error;
-pub mod field;
-pub mod field_plan;
-pub mod fieldset;
-pub mod plan;
-pub mod projection;
-pub mod relation;
-pub mod rule;
-pub mod scalar;
-pub mod schema;
-pub mod template;
-pub mod traits;
-pub mod value;
+mod ability;
+mod builder;
+mod condition;
+mod error;
+mod field;
+mod field_plan;
+mod fieldset;
+mod plan;
+mod projection;
+mod relation;
+mod rule;
+mod scalar;
+mod schema;
+mod template;
+mod traits;
+mod value;
 
 pub use ability::Ability;
 pub use builder::{AbilityBuilder, GroupBuilder, IntoActions, IntoSubjects};

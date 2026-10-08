@@ -9,12 +9,12 @@ note: expected this to be `Nullable`
   |
   | #[derive(Clone, Debug, Resource)]
   |                        ^^^^^^^^
-note: required by a bound in `condition::cond::<impl mandate::Rel<R, T>>::is_null`
+note: required by a bound in `mandate::condition::cond::<impl mandate::Rel<R, T>>::is_null`
  --> src/condition/cond.rs
   |
   |     pub fn is_null(self) -> Cond<R>
   |            ------- required by a bound in this associated function
   |     where
   |         T: RelationSlot<Cardinality = ToOne, Nullability = Nullable>,
-  |                                              ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `condition::cond::<impl Rel<R, T>>::is_null`
+  |                                              ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `mandate::condition::cond::<impl Rel<R, T>>::is_null`
   = note: this error originates in the derive macro `Resource` (in Nightly builds, run with -Z macro-backtrace for more info)

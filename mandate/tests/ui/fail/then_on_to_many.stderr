@@ -4,11 +4,11 @@ error[E0271]: type mismatch resolving `<Vec<Tag> as RelationSlot>::Cardinality =
 7 |     let _ = Post::TAGS.then(Tag::ID.eq(1));
   |                        ^^^^ expected `ToOne`, found `ToMany`
   |
-note: required by a bound in `condition::cond::<impl mandate::Rel<R, T>>::then`
+note: required by a bound in `mandate::condition::cond::<impl mandate::Rel<R, T>>::then`
  --> src/condition/cond.rs
   |
   |     pub fn then(self, c: Cond<T::Target>) -> Cond<R>
   |            ---- required by a bound in this associated function
   |     where
   |         T: RelationSlot<Cardinality = ToOne>,
-  |                         ^^^^^^^^^^^^^^^^^^^ required by this bound in `condition::cond::<impl Rel<R, T>>::then`
+  |                         ^^^^^^^^^^^^^^^^^^^ required by this bound in `mandate::condition::cond::<impl Rel<R, T>>::then`

@@ -9,12 +9,12 @@ note: expected this to be `mandate::ToMany`
   |
   | #[derive(Clone, Debug, Resource)]
   |                        ^^^^^^^^
-note: required by a bound in `condition::cond::<impl mandate::Rel<R, T>>::some`
+note: required by a bound in `mandate::condition::cond::<impl mandate::Rel<R, T>>::some`
  --> src/condition/cond.rs
   |
   |     pub fn some(self, c: Cond<T::Target>) -> Cond<R>
   |            ---- required by a bound in this associated function
   |     where
   |         T: RelationSlot<Cardinality = ToMany>,
-  |                         ^^^^^^^^^^^^^^^^^^^^ required by this bound in `condition::cond::<impl Rel<R, T>>::some`
+  |                         ^^^^^^^^^^^^^^^^^^^^ required by this bound in `mandate::condition::cond::<impl Rel<R, T>>::some`
   = note: this error originates in the derive macro `Resource` (in Nightly builds, run with -Z macro-backtrace for more info)
