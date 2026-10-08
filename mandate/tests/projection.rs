@@ -175,6 +175,7 @@ fn projection_suffices_for_checks() {
             loaded: Loaded(vec!["name"]),
             id: 1,
             name: None,
+            author: Lazy::Loaded(None),
         }]),
     };
     assert!(a.permitted_fields(Action::Read, &t).is_ok());

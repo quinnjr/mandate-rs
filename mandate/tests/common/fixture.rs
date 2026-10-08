@@ -151,8 +151,10 @@ pub struct TUser {
 #[resource(load_state = loaded)]
 pub struct TTag {
     pub loaded: Loaded,
-    pub id: i64,
-    pub name: Option<String>,
+    pub id: i64,              // 0
+    pub name: Option<String>, // 1
+    #[resource(relation)]
+    pub author: Lazy<Option<TUser>>, // 2   ToOne, Nullable (nested under TPost::TAGS)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, mandate::Action)]

@@ -145,13 +145,27 @@ pub fn cond_tuser(depth: u32) -> impl Strategy<Value = Cond<TUser>> {
     combine(Union::new(leaves).boxed(), depth)
 }
 
+/// Conditions on `TTag`, including the nested nullable to-one `author`
+/// (`then`, `is_null`, `is_not_null`). `TUser` has no relations, so the
+/// nesting stops there.
 pub fn cond_ttag(depth: u32) -> impl Strategy<Value = Cond<TTag>> {
-    let mut leaves = eq_ops(TTag::ID, int());
-    leaves.extend(ord_ops(TTag::ID, int()));
-    leaves.extend(eq_ops(TTag::NAME, text()));
-    leaves.extend(text_ops(TTag::NAME, text()));
-    leaves.extend(null_ops(TTag::NAME));
-    combine(Union::new(leaves).boxed(), depth)
+    let mut scalars = eq_ops(TTag::ID, int());
+    scalars.extend(ord_ops(TTag::ID, int()));
+    scalars.extend(eq_ops(TTag::NAME, text()));
+    scalars.extend(text_ops(TTag::NAME, text()));
+    scalars.extend(null_ops(TTag::NAME));
+    let relations: Leaves<TTag> = vec![
+        cond_tuser(inner_depth(depth))
+            .prop_map(|c| TTag::AUTHOR.then(c))
+            .boxed(),
+        Just(TTag::AUTHOR.is_null()).boxed(),
+        Just(TTag::AUTHOR.is_not_null()).boxed(),
+    ];
+    let leaf = Union::new_weighted(vec![
+        (2, Union::new(scalars).boxed()),
+        (1, Union::new(relations).boxed()),
+    ]);
+    combine(leaf.boxed(), depth)
 }
 
 /// Conditions on `TPost`: every operator each field type allows, the to-one
@@ -340,17 +354,25 @@ pub fn tuser(fully_loaded: bool) -> impl Strategy<Value = TUser> {
         .prop_map(|(loaded, id, email)| TUser { loaded, id, email })
 }
 
+/// A tag whose author is absent, present, or (unless `fully_loaded`)
+/// sometimes `NotLoaded`.
 pub fn ttag(fully_loaded: bool) -> impl Strategy<Value = TTag> {
     (
         unloaded(&["id", "name"], fully_loaded),
         int(),
         prop::option::of(text()),
+        lazy(prop::option::of(tuser(fully_loaded)), fully_loaded),
     )
-        .prop_map(|(loaded, id, name)| TTag { loaded, id, name })
+        .prop_map(|(loaded, id, name, author)| TTag {
+            loaded,
+            id,
+            name,
+            author,
+        })
 }
 
 /// A post with null scalars, absent reviewers, empty and non-empty tag lists
-/// (tags with null names). Unless `fully_loaded`, scalars of the post and of
+/// (tags with null names, and with absent or present authors). Unless `fully_loaded`, scalars of the post and of
 /// its related rows may be unloaded and relation slots `NotLoaded`.
 pub fn tpost(fully_loaded: bool) -> impl Strategy<Value = TPost> {
     (

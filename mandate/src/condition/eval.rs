@@ -530,6 +530,7 @@ mod tests {
                 loaded: Loaded(vec!["name"]),
                 id: 1,
                 name: None,
+                author: Lazy::Loaded(None),
             }]),
             ..tpost()
         };
@@ -568,11 +569,13 @@ mod tests {
             loaded: Loaded(vec!["name"]),
             id: 1,
             name: None,
+            author: Lazy::Loaded(None),
         };
         let rust_tag = TTag {
             loaded: Loaded::default(),
             id: 2,
             name: Some("rust".into()),
+            author: Lazy::Loaded(None),
         };
         let with_tags = |tags| TPost {
             tags: Lazy::Loaded(tags),

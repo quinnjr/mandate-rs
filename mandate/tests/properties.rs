@@ -12,8 +12,9 @@ mod common;
 use common::fixture::*;
 use common::strategies::*;
 use mandate::{
-    Ability, Access, CheckError, Condition, Context, EvalError, FieldIdx, FieldMask, Projection,
-    Quant, Resource as _, RuleTemplate, Schema, TemplateValue, Templates,
+    Ability, Access, CheckError, Condition, Context, EvalError, FieldDef, FieldIdx, FieldKind,
+    FieldMask, Projection, Quant, RelationProjection, Resource as _, RuleTemplate, Schema,
+    TemplateValue, Templates, Unresolved, UnresolvedOutcome,
 };
 use proptest::prelude::*;
 use proptest::sample::Index;
@@ -136,8 +137,13 @@ mod model {
                 panic!("not a TTag scalar: {f:?}")
             }
         }
-        fn rows(&self, _: FieldIdx) -> Option<Vec<&dyn Model>> {
-            None
+        fn rows(&self, f: FieldIdx) -> Option<Vec<&dyn Model>> {
+            (f == TTag::AUTHOR.idx()).then(|| {
+                loaded(&self.author)
+                    .iter()
+                    .map(|u| u as &dyn Model)
+                    .collect()
+            })
         }
     }
 
@@ -352,43 +358,70 @@ fn unfetched(schema: &Schema, fetched: FieldMask) -> Loaded {
     )
 }
 
+/// Checks a projection's relation tree against the schemas: each entry is
+/// a relation of its owner with that relation's target, entries are sorted
+/// by relation without duplicates, and the fields read exist on the target.
+fn check_relations(rels: &[RelationProjection], owner: &'static Schema) {
+    assert!(
+        rels.windows(2).all(|w| w[0].relation < w[1].relation),
+        "unsorted or duplicate relations: {rels:?}"
+    );
+    for r in rels {
+        let Some(FieldDef {
+            kind: FieldKind::Relation { target, .. },
+            ..
+        }) = owner.field(r.relation)
+        else {
+            panic!("{:?} is not a relation of {}", r.relation, owner.name)
+        };
+        assert!(std::ptr::eq(target(), r.target), "wrong target in {r:?}");
+        let all = FieldMask::all(r.target.fields.len());
+        assert!(r.fields.is_subset(&all), "unknown fields in {r:?}");
+        check_relations(&r.relations, r.target);
+    }
+}
+
+/// The projection entry for relation `r`, if it is a dependency.
+fn dependency(rels: &[RelationProjection], r: FieldIdx) -> Option<&RelationProjection> {
+    rels.iter().find(|x| x.relation == r)
+}
+
 /// `p` reporting `NotLoaded` for everything outside `proj`: unfetched
-/// scalars, relations that are not condition dependencies, and the target
-/// fields those relations do not read.
+/// scalars, relations that are not condition dependencies, and, within each
+/// dependency, the target fields and nested relations (`tags.author`) it
+/// does not read.
 fn fetch(p: &TPost, proj: &Projection<TPost>) -> TPost {
-    let fetched = |r: FieldIdx| {
-        proj.relations
-            .iter()
-            .find(|x| x.relation == r)
-            .map(|x| x.fields)
+    check_relations(&proj.relations, TPost::schema());
+    let user = |d: &RelationProjection, u: &TUser| TUser {
+        loaded: unfetched(TUser::schema(), d.fields),
+        ..u.clone()
     };
-    let org = match (fetched(TPost::ORG.idx()), &p.org) {
-        (Some(fs), Lazy::Loaded(o)) => Lazy::Loaded(TOrg {
-            loaded: unfetched(TOrg::schema(), fs),
+    let org = match (dependency(&proj.relations, TPost::ORG.idx()), &p.org) {
+        (Some(d), Lazy::Loaded(o)) => Lazy::Loaded(TOrg {
+            loaded: unfetched(TOrg::schema(), d.fields),
             ..o.clone()
         }),
         _ => Lazy::NotLoaded,
     };
-    let reviewer = match (fetched(TPost::REVIEWER.idx()), &p.reviewer) {
-        (Some(fs), Lazy::Loaded(u)) => Lazy::Loaded(u.as_ref().map(|u| TUser {
-            loaded: unfetched(TUser::schema(), fs),
-            ..u.clone()
-        })),
+    let reviewer = match (
+        dependency(&proj.relations, TPost::REVIEWER.idx()),
+        &p.reviewer,
+    ) {
+        (Some(d), Lazy::Loaded(u)) => Lazy::Loaded(u.as_ref().map(|u| user(d, u))),
         _ => Lazy::NotLoaded,
     };
-    let tags = match (fetched(TPost::TAGS.idx()), &p.tags) {
-        (Some(fs), Lazy::Loaded(ts)) => Lazy::Loaded(
-            ts.iter()
-                .map(|t| TTag {
-                    loaded: unfetched(TTag::schema(), fs),
-                    ..t.clone()
-                })
-                .collect(),
-        ),
+    let tag = |d: &RelationProjection, t: &TTag| TTag {
+        loaded: unfetched(TTag::schema(), d.fields),
+        author: match (dependency(&d.relations, TTag::AUTHOR.idx()), &t.author) {
+            (Some(a), Lazy::Loaded(u)) => Lazy::Loaded(u.as_ref().map(|u| user(a, u))),
+            _ => Lazy::NotLoaded,
+        },
+        ..t.clone()
+    };
+    let tags = match (dependency(&proj.relations, TPost::TAGS.idx()), &p.tags) {
+        (Some(d), Lazy::Loaded(ts)) => Lazy::Loaded(ts.iter().map(|t| tag(d, t)).collect()),
         _ => Lazy::NotLoaded,
     };
-    // The targets have no relations of their own.
-    assert!(proj.relations.iter().all(|r| r.relations.is_empty()));
     TPost {
         loaded: unfetched(TPost::schema(), proj.fields.mask()),
         org,
@@ -398,15 +431,20 @@ fn fetch(p: &TPost, proj: &Projection<TPost>) -> TPost {
     }
 }
 
-/// Calls `f` on every literal leaf of a template condition object: a value
+/// Calls `f` on every literal leaf of a template condition object (a value
 /// under a field key or under a comparison or text operator, or a whole
-/// `$in`/`$nin` array.
-fn literals(entries: &mut [(String, TemplateValue)], f: &mut dyn FnMut(&mut TemplateValue)) {
-    fn object(v: &mut TemplateValue, f: &mut dyn FnMut(&mut TemplateValue)) {
+/// `$in`/`$nin` array) with the leaf's polarity: negative under an odd
+/// number of `$not`s and `$none`s (§6.4).
+fn literals(
+    entries: &mut [(String, TemplateValue)],
+    negative: bool,
+    f: &mut dyn FnMut(&mut TemplateValue, bool),
+) {
+    fn object(v: &mut TemplateValue, negative: bool, f: &mut dyn FnMut(&mut TemplateValue, bool)) {
         let TemplateValue::Object(entries) = v else {
             panic!("expected an object, found {v:?}")
         };
-        literals(entries, f);
+        literals(entries, negative, f);
     }
     for (key, value) in entries.iter_mut() {
         match key.as_str() {
@@ -415,23 +453,24 @@ fn literals(entries: &mut [(String, TemplateValue)], f: &mut dyn FnMut(&mut Temp
                     panic!("expected an array, found {value:?}")
                 };
                 for item in items {
-                    object(item, f);
+                    object(item, negative, f);
                 }
             }
-            "$not" | "$some" | "$every" | "$none" => object(value, f),
-            "$in" | "$nin" => f(value),
+            "$some" | "$every" => object(value, negative, f),
+            "$not" | "$none" => object(value, !negative, f),
+            "$in" | "$nin" => f(value, negative),
             "$eq" | "$ne" | "$lt" | "$lte" | "$gt" | "$gte" | "$contains" | "$startsWith"
             | "$endsWith" => {
                 if !matches!(value, TemplateValue::Null) {
-                    f(value);
+                    f(value, negative);
                 }
             }
             "$isNull" => {}
             op if op.starts_with('$') => panic!("unexpected operator `{op}`"),
             _field => match value {
-                TemplateValue::Object(_) => object(value, f),
+                TemplateValue::Object(_) => object(value, negative, f),
                 TemplateValue::Null => {}
-                _ => f(value),
+                _ => f(value, negative),
             },
         }
     }
@@ -450,13 +489,15 @@ fn context_value(v: &TemplateValue) -> serde_json::Value {
     }
 }
 
-fn round_trip(rules: &str, roots: &[&str], ctx: &Context) -> (Ab, usize) {
+/// Compiles serialized rules, binds them to `ctx`, and builds the result;
+/// also returns the unresolved placeholders.
+fn round_trip(rules: &str, roots: &[&str], ctx: &Context) -> (Ab, Vec<Unresolved>) {
     let raw: Vec<RuleTemplate> = serde_json::from_str(rules).expect("serialized rules parse");
     let bound = Templates::<Action, TSubject>::compile(&raw, roots)
         .expect("serialized rules compile")
         .bind(ctx)
         .expect("serialized rules bind");
-    let unresolved = bound.unresolved().len();
+    let unresolved = bound.unresolved().to_vec();
     let ability = Ab::builder()
         .extend(bound)
         .build()
@@ -531,7 +572,7 @@ proptest! {
         }
         let json = serde_json::to_string(original.rules()).expect("rules serialize");
         let (rebuilt, unresolved) = round_trip(&json, &[], &Context::empty());
-        prop_assert_eq!(unresolved, 0);
+        prop_assert_eq!(unresolved, vec![]);
         prop_assert_eq!(rebuilt.rules(), original.rules(), "json: {}", json);
     }
 
@@ -614,32 +655,46 @@ proptest! {
         let mut count = 0;
         for r in raw.iter_mut() {
             if let Some(TemplateValue::Object(c)) = &mut r.conditions {
-                literals(c, &mut |_| count += 1);
+                literals(c, false, &mut |_, _| count += 1);
             }
         }
         prop_assume!(count > 0);
         let target = pick.index(count);
         let (mut i, mut replaced) = (0, None);
-        for r in raw.iter_mut() {
+        for (rule_index, r) in raw.iter_mut().enumerate() {
+            let inverted = r.inverted;
             if let Some(TemplateValue::Object(c)) = &mut r.conditions {
-                literals(c, &mut |v| {
+                literals(c, false, &mut |v, negative| {
                     if i == target {
                         let placeholder = TemplateValue::String("${ctx.v}".into());
-                        replaced = Some(std::mem::replace(v, placeholder));
+                        let old = std::mem::replace(v, placeholder);
+                        replaced = Some((old, rule_index, inverted, negative));
                     }
                     i += 1;
                 });
             }
         }
-        let value = context_value(&replaced.expect("the picked literal"));
+        let (old, rule_index, inverted, negative) = replaced.expect("the picked literal");
+        let value = context_value(&old);
+        // The least-access constant: false in a `can` rule, true in a
+        // `cannot` rule, swapped under negative polarity (§6.4).
+        let expected = Unresolved {
+            rule_index,
+            placeholder: "ctx.v".into(),
+            outcome: if inverted == negative {
+                UnresolvedOutcome::LeafFalse
+            } else {
+                UnresolvedOutcome::LeafTrue
+            },
+        };
         let template = serde_json::to_string(&raw).expect("templates serialize");
 
         let ctx = Context::new().with("ctx", &serde_json::json!({ "v": value })).expect("json");
-        let (resolved, n) = round_trip(&template, &["ctx"], &ctx);
-        prop_assert_eq!(n, 0);
+        let (resolved, unresolved) = round_trip(&template, &["ctx"], &ctx);
+        prop_assert_eq!(unresolved, vec![]);
         prop_assert_eq!(resolved.rules(), original.rules(), "template: {}", template);
-        let (unresolved, n) = round_trip(&template, &["ctx"], &Context::empty());
-        prop_assert_eq!(n, 1);
+        let (unresolved, reported) = round_trip(&template, &["ctx"], &Context::empty());
+        prop_assert_eq!(reported, vec![expected], "template: {}", template);
 
         for act in ACTIONS {
             let can = |a: &Ab| verdict(a.check(act, &p)).expect("fully loaded");
