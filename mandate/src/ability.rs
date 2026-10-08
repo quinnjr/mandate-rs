@@ -1,11 +1,12 @@
 //! The immutable rule set and its dense index.
 
 use crate::condition::eval::eval;
-use crate::condition::fold::{Folded, fold};
-use crate::condition::nnf::nnf;
+use crate::condition::fold::Folded;
+use crate::plan::restrict;
 use crate::{
     AbilityBuilder, Access, Action, CheckError, Condition, DynResource, EvalError, FieldIdx,
-    FieldMask, FieldRef, FieldSet, Forbidden, Plan, Resource, Rule, Subject, SubjectResource,
+    FieldMask, FieldPlan, FieldRef, FieldRule, FieldSet, Forbidden, Plan, Resource, Rule, Subject,
+    SubjectResource,
 };
 
 /// An immutable, indexed set of rules. `Send + Sync`; wrap in `Arc` to share.
@@ -205,15 +206,38 @@ impl<A: Action, S: Subject> Ability<A, S> {
             self.applicable(action, R::SUBJECT, None)
                 .map(|r| (r.inverted(), r.condition())),
         );
-        let restricted = match fold(f, schema) {
-            Folded::Cond(c) => fold(nnf(c, schema), schema),
-            constant => constant,
-        };
-        Ok(match restricted {
+        Ok(match restrict(f, schema) {
             Folded::True => Access::All,
             Folded::False => Access::Denied,
             Folded::Cond(c) => Access::Filter(Plan::new(c)),
         })
+    }
+
+    /// One entry per rule covering `action` on `R`, in definition order, so a
+    /// database can compute each condition and [`FieldPlan::permitted`] can
+    /// combine them (§7.7).
+    pub fn field_plan<R: SubjectResource<S>>(&self, action: A) -> Result<FieldPlan<R>, EvalError> {
+        Self::guard::<R>()?;
+        let schema = R::schema();
+        let rules = self
+            .cell(action, R::SUBJECT)
+            .iter()
+            .map(|&i| {
+                let rule = &self.rules[i as usize];
+                let cond = match rule.condition().map(|c| restrict(c.clone(), schema)) {
+                    None | Some(Folded::True) => None,
+                    Some(Folded::Cond(c)) => Some(Plan::new(c)),
+                    // Unreachable for built rules; evaluates to false.
+                    Some(Folded::False) => Some(Plan::new(Condition::Or(vec![]))),
+                };
+                FieldRule {
+                    inverted: rule.inverted(),
+                    fields: rule.fields().map(FieldSet::from_mask),
+                    cond,
+                }
+            })
+            .collect();
+        Ok(FieldPlan { rules })
     }
 
     /// The fields of `resource` that `action` is permitted on (§7.4).

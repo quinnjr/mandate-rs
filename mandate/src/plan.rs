@@ -7,6 +7,8 @@ use core::marker::PhantomData;
 use serde::{Serialize, Serializer};
 
 use crate::condition::eval::eval;
+use crate::condition::fold::{Folded, fold};
+use crate::condition::nnf::nnf;
 use crate::{Condition, EvalError, Resource, Schema};
 
 /// Which rows of `R` an action is allowed on; see
@@ -45,6 +47,14 @@ impl<R> Plan<R> {
     /// [`schema`](Self::schema).
     pub fn condition(&self) -> &Condition {
         &self.condition
+    }
+}
+
+/// Folds `c`, rewrites it to restricted negation normal form, and folds again.
+pub(crate) fn restrict(c: Condition, schema: &'static Schema) -> Folded {
+    match fold(c, schema) {
+        Folded::Cond(c) => fold(nnf(c, schema), schema),
+        constant => constant,
     }
 }
 

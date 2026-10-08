@@ -9,6 +9,7 @@ pub mod builder;
 pub mod condition;
 pub mod error;
 pub mod field;
+pub mod field_plan;
 pub mod fieldset;
 pub mod plan;
 pub mod projection;
@@ -24,6 +25,7 @@ pub use builder::{AbilityBuilder, GroupBuilder, IntoActions, IntoSubjects};
 pub use condition::{CmpOp, Cond, Condition, Quant, StrOp};
 pub use error::{BuildError, CheckError, EvalError, Forbidden};
 pub use field::{Field, FieldRef, Opaque, Rel};
+pub use field_plan::{FieldPlan, FieldRule};
 pub use fieldset::{FieldMask, FieldSet};
 #[cfg(feature = "derive")]
 pub use mandate_derive::{Action, IntoValue, Resource, Subject};
