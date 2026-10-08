@@ -19,6 +19,33 @@ pub struct Ability<A, S> {
 
 impl<A: Action, S: Subject> Ability<A, S> {
     /// Starts building an ability.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
+    /// # #[derive(Clone, Debug, Resource)]
+    /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Action)]
+    /// # enum Act { Read, Update, #[action(manage)] Manage }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Subject)]
+    /// # enum Sub { #[subject(resource = Post)] Post, Dashboard, #[subject(all)] All }
+    /// # let mine = Post { id: 1, author_id: 7, title: "Hi".into(), body: "Text".into(), locked: false };
+    /// # let theirs = Post { author_id: 8, ..mine.clone() };
+    /// let ability = Ability::<Act, Sub>::builder()
+    ///     .can(Act::Read, Sub::Post)
+    ///     .can(Act::Update, Sub::Post)
+    ///         .when(Post::AUTHOR_ID.eq(7))
+    ///         .fields([Post::TITLE.into(), Post::BODY.into()])
+    ///     .cannot(Act::Update, Sub::Post)
+    ///         .when(Post::LOCKED.eq(true))
+    ///         .because("Locked posts are read-only")
+    ///     .can(Act::Read, Sub::Dashboard)
+    ///     .build()
+    ///     .unwrap();
+    /// assert!(ability.can(Act::Read, &mine));
+    /// assert!(ability.can_type(Act::Read, Sub::Dashboard));
+    /// ```
     pub fn builder() -> AbilityBuilder<A, S> {
         AbilityBuilder::new()
     }
@@ -135,11 +162,52 @@ impl<A: Action, S: Subject> Ability<A, S> {
     }
 
     /// Whether `action` is allowed on `resource`. Fails closed (`false`) on any error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
+    /// # #[derive(Clone, Debug, Resource)]
+    /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Action)]
+    /// # enum Act { Read, Update, #[action(manage)] Manage }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Subject)]
+    /// # enum Sub { #[subject(resource = Post)] Post, Dashboard, #[subject(all)] All }
+    /// # let mine = Post { id: 1, author_id: 7, title: "Hi".into(), body: "Text".into(), locked: false };
+    /// # let theirs = Post { author_id: 8, ..mine.clone() };
+    /// # let ability = Ability::<Act, Sub>::builder()
+    /// #     .can(Act::Read, Sub::Post)
+    /// #     .can(Act::Update, Sub::Post).when(Post::AUTHOR_ID.eq(7))
+    /// #     .build().unwrap();
+    /// assert!(ability.can(Act::Read, &mine));
+    /// assert!(ability.can(Act::Update, &mine));
+    /// assert!(!ability.can(Act::Update, &theirs));
+    /// ```
     pub fn can<R: SubjectResource<S>>(&self, action: A, resource: &R) -> bool {
         matches!(self.decide(action, resource, None), Ok(Some(r)) if !r.inverted())
     }
 
     /// Whether `action` is allowed on the `field` of `resource`. Fails closed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
+    /// # #[derive(Clone, Debug, Resource)]
+    /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Action)]
+    /// # enum Act { Read, Update, #[action(manage)] Manage }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Subject)]
+    /// # enum Sub { #[subject(resource = Post)] Post, Dashboard, #[subject(all)] All }
+    /// # let mine = Post { id: 1, author_id: 7, title: "Hi".into(), body: "Text".into(), locked: false };
+    /// # let theirs = Post { author_id: 8, ..mine.clone() };
+    /// # let ability = Ability::<Act, Sub>::builder()
+    /// #     .can(Act::Read, Sub::Post)
+    /// #     .can(Act::Update, Sub::Post).when(Post::AUTHOR_ID.eq(7))
+    /// #     .build().unwrap();
+    /// assert!(ability.can_field(Act::Update, &mine, Post::TITLE));
+    /// assert!(!ability.can_field(Act::Update, &theirs, Post::TITLE));
+    /// ```
     pub fn can_field<R: SubjectResource<S>>(
         &self,
         action: A,
@@ -151,6 +219,26 @@ impl<A: Action, S: Subject> Ability<A, S> {
     }
 
     /// Like [`can`](Self::can), but explains a denial or an evaluation failure.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
+    /// # #[derive(Clone, Debug, Resource)]
+    /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Action)]
+    /// # enum Act { Read, Update, #[action(manage)] Manage }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Subject)]
+    /// # enum Sub { #[subject(resource = Post)] Post, Dashboard, #[subject(all)] All }
+    /// # let mine = Post { id: 1, author_id: 7, title: "Hi".into(), body: "Text".into(), locked: false };
+    /// # let theirs = Post { author_id: 8, ..mine.clone() };
+    /// # let ability = Ability::<Act, Sub>::builder()
+    /// #     .can(Act::Read, Sub::Post)
+    /// #     .can(Act::Update, Sub::Post).when(Post::AUTHOR_ID.eq(7))
+    /// #     .build().unwrap();
+    /// assert!(ability.check(Act::Update, &mine).is_ok());
+    /// assert!(ability.check(Act::Update, &theirs).is_err());
+    /// ```
     pub fn check<R: SubjectResource<S>>(
         &self,
         action: A,
@@ -199,6 +287,33 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// A fully loaded `r` is in the result exactly when [`can`](Self::can)
     /// allows `action` on it. Fails closed with [`EvalError::SchemaMismatch`]
     /// unless `R`'s schema is its subject's.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
+    /// # #[derive(Clone, Debug, Resource)]
+    /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Action)]
+    /// # enum Act { Read, Update, #[action(manage)] Manage }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Subject)]
+    /// # enum Sub { #[subject(resource = Post)] Post, Dashboard, #[subject(all)] All }
+    /// # let mine = Post { id: 1, author_id: 7, title: "Hi".into(), body: "Text".into(), locked: false };
+    /// # let theirs = Post { author_id: 8, ..mine.clone() };
+    /// # let ability = Ability::<Act, Sub>::builder()
+    /// #     .can(Act::Read, Sub::Post)
+    /// #     .can(Act::Update, Sub::Post).when(Post::AUTHOR_ID.eq(7))
+    /// #     .build().unwrap();
+    /// match ability.access::<Post>(Act::Update).unwrap() {
+    ///     Access::Filter(plan) => {
+    ///         assert!(plan.eval(&mine).unwrap());
+    ///         assert!(!plan.eval(&theirs).unwrap());
+    ///     }
+    ///     other => panic!("expected a filter, got {other:?}"),
+    /// }
+    /// assert_eq!(ability.access::<Post>(Act::Read).unwrap(), Access::All);
+    /// assert_eq!(ability.access::<Post>(Act::Manage).unwrap(), Access::Denied);
+    /// ```
     pub fn access<R: SubjectResource<S>>(&self, action: A) -> Result<Access<R>, EvalError> {
         Self::guard::<R>()?;
         let schema = R::schema();
@@ -216,6 +331,29 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// One entry per rule covering `action` on `R`, in definition order, so a
     /// database can compute each condition and [`FieldPlan::permitted`] can
     /// combine them (§7.7).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
+    /// # #[derive(Clone, Debug, Resource)]
+    /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Action)]
+    /// # enum Act { Read, Update, #[action(manage)] Manage }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Subject)]
+    /// # enum Sub { #[subject(resource = Post)] Post, Dashboard, #[subject(all)] All }
+    /// # let mine = Post { id: 1, author_id: 7, title: "Hi".into(), body: "Text".into(), locked: false };
+    /// # let theirs = Post { author_id: 8, ..mine.clone() };
+    /// # let ability = Ability::<Act, Sub>::builder()
+    /// #     .can(Act::Read, Sub::Post)
+    /// #     .can(Act::Update, Sub::Post).when(Post::AUTHOR_ID.eq(7))
+    /// #     .build().unwrap();
+    /// let plan = ability.field_plan::<Post>(Act::Update).unwrap();
+    /// assert_eq!(plan.rules.len(), 1);
+    /// // the database says whether each rule's condition matched this row
+    /// let permitted = plan.permitted(|_rule| true);
+    /// assert!(permitted.contains(Post::TITLE));
+    /// ```
     pub fn field_plan<R: SubjectResource<S>>(&self, action: A) -> Result<FieldPlan<R>, EvalError> {
         Self::guard::<R>()?;
         let schema = R::schema();
@@ -241,6 +379,32 @@ impl<A: Action, S: Subject> Ability<A, S> {
     }
 
     /// The fields of `resource` that `action` is permitted on (§7.4).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
+    /// # #[derive(Clone, Debug, Resource)]
+    /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Action)]
+    /// # enum Act { Read, Update, #[action(manage)] Manage }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Subject)]
+    /// # enum Sub { #[subject(resource = Post)] Post, Dashboard, #[subject(all)] All }
+    /// # let mine = Post { id: 1, author_id: 7, title: "Hi".into(), body: "Text".into(), locked: false };
+    /// # let theirs = Post { author_id: 8, ..mine.clone() };
+    /// # let ability = Ability::<Act, Sub>::builder()
+    /// #     .can(Act::Read, Sub::Post)
+    /// #     .can(Act::Update, Sub::Post).when(Post::AUTHOR_ID.eq(7))
+    /// #     .build().unwrap();
+    /// # let ability = Ability::<Act, Sub>::builder()
+    /// #     .can(Act::Update, Sub::Post).when(Post::AUTHOR_ID.eq(7))
+    /// #         .fields([Post::TITLE.into(), Post::BODY.into()])
+    /// #     .build().unwrap();
+    /// let fields = ability.permitted_fields(Act::Update, &mine).unwrap();
+    /// let names: Vec<_> = fields.iter().map(|(_, name)| name).collect();
+    /// assert_eq!(names, ["title", "body"]);
+    /// assert!(ability.permitted_fields(Act::Update, &theirs).unwrap().mask().is_empty());
+    /// ```
     pub fn permitted_fields<R: SubjectResource<S>>(
         &self,
         action: A,

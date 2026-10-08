@@ -68,6 +68,29 @@ impl<R: Resource> Plan<R> {
     ///
     /// For every fully loaded `r`, this is `Ok(true)` exactly when
     /// [`Ability::can`](crate::Ability::can) allows the planned action on `r`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
+    /// # #[derive(Clone, Debug, Resource)]
+    /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Action)]
+    /// # enum Act { Read, Update, #[action(manage)] Manage }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Subject)]
+    /// # enum Sub { #[subject(resource = Post)] Post, Dashboard, #[subject(all)] All }
+    /// # let mine = Post { id: 1, author_id: 7, title: "Hi".into(), body: "Text".into(), locked: false };
+    /// # let theirs = Post { author_id: 8, ..mine.clone() };
+    /// # let ability = Ability::<Act, Sub>::builder()
+    /// #     .can(Act::Read, Sub::Post)
+    /// #     .can(Act::Update, Sub::Post).when(Post::AUTHOR_ID.eq(7))
+    /// #     .build().unwrap();
+    /// let Access::Filter(plan) = ability.access::<Post>(Act::Update).unwrap() else {
+    ///     panic!("expected a filter");
+    /// };
+    /// assert_eq!(plan.eval(&mine), Ok(true));
+    /// assert_eq!(plan.eval(&theirs), Ok(false));
+    /// ```
     pub fn eval(&self, r: &R) -> Result<bool, EvalError> {
         eval(&self.condition, R::schema(), r.as_dyn())
     }

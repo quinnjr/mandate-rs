@@ -1,7 +1,7 @@
 [package]
 name = "mandate-derive"
 version = "0.1.0"
-description = "Derive macros for mandate-rs"
+description = "Derive macros (Action, Subject, Resource, IntoValue) for mandate-rs"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -38,11 +38,52 @@ impl<R> Cond<R> {
     }
 
     /// All conditions hold (`true` when empty).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
+    /// # #[derive(Clone, Debug, Resource)]
+    /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Action)]
+    /// # enum Act { Read, Update, #[action(manage)] Manage }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Subject)]
+    /// # enum Sub { #[subject(resource = Post)] Post, Dashboard, #[subject(all)] All }
+    /// # let mine = Post { id: 1, author_id: 7, title: "Hi".into(), body: "Text".into(), locked: false };
+    /// # let theirs = Post { author_id: 8, ..mine.clone() };
+    /// let cond = Cond::all([Post::AUTHOR_ID.eq(7), Post::LOCKED.eq(false)]);
+    /// let ability = Ability::<Act, Sub>::builder()
+    ///     .can(Act::Update, Sub::Post).when(cond)
+    ///     .build().unwrap();
+    /// assert!(ability.can(Act::Update, &mine));
+    /// assert!(!ability.can(Act::Update, &Post { locked: true, ..mine }));
+    /// ```
     pub fn all(conds: impl IntoIterator<Item = Cond<R>>) -> Cond<R> {
         Self::new(Condition::And(conds.into_iter().map(|c| c.0).collect()))
     }
 
     /// At least one condition holds (`false` when empty).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
+    /// # #[derive(Clone, Debug, Resource)]
+    /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Action)]
+    /// # enum Act { Read, Update, #[action(manage)] Manage }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Subject)]
+    /// # enum Sub { #[subject(resource = Post)] Post, Dashboard, #[subject(all)] All }
+    /// # let mine = Post { id: 1, author_id: 7, title: "Hi".into(), body: "Text".into(), locked: false };
+    /// # let theirs = Post { author_id: 8, ..mine.clone() };
+    /// let cond = Cond::any([Post::AUTHOR_ID.eq(7), Post::LOCKED.eq(true)]);
+    /// let ability = Ability::<Act, Sub>::builder()
+    ///     .can(Act::Read, Sub::Post).when(cond)
+    ///     .build().unwrap();
+    /// assert!(ability.can(Act::Read, &mine));
+    /// assert!(!ability.can(Act::Read, &theirs));
+    /// assert!(ability.can(Act::Read, &Post { locked: true, ..theirs }));
+    /// ```
     pub fn any(conds: impl IntoIterator<Item = Cond<R>>) -> Cond<R> {
         Self::new(Condition::Or(conds.into_iter().map(|c| c.0).collect()))
     }

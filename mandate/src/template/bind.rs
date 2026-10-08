@@ -41,6 +41,25 @@ impl Context {
 
     /// Adds root `root`, serializing `value` to JSON now. A later value for
     /// the same root replaces the earlier one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
+    /// # #[derive(Clone, Debug, Resource)]
+    /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Action)]
+    /// # enum Act { Read, Update, #[action(manage)] Manage }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Subject)]
+    /// # enum Sub { #[subject(resource = Post)] Post, Dashboard, #[subject(all)] All }
+    /// # let mine = Post { id: 1, author_id: 7, title: "Hi".into(), body: "Text".into(), locked: false };
+    /// # let theirs = Post { author_id: 8, ..mine.clone() };
+    /// # use mandate::Context;
+    /// #[derive(serde::Serialize)]
+    /// struct User { id: i64, org_id: i64 }
+    /// // each root is serialized once, here
+    /// let ctx = Context::new().with("user", &User { id: 7, org_id: 3 }).unwrap();
+    /// ```
     pub fn with(mut self, root: &str, value: &impl Serialize) -> Result<Self, serde_json::Error> {
         self.roots
             .insert(root.to_owned(), serde_json::to_value(value)?);
@@ -115,6 +134,31 @@ impl<A: Action, S: Subject> Templates<A, S> {
     /// Fails if a resolved value does not have the kind its field requires,
     /// checked as template literals are at compile time (an enum value must
     /// be a variant name; a list placeholder takes an array without `null`s).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
+    /// # #[derive(Clone, Debug, Resource)]
+    /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Action)]
+    /// # enum Act { Read, Update, #[action(manage)] Manage }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Subject)]
+    /// # enum Sub { #[subject(resource = Post)] Post, Dashboard, #[subject(all)] All }
+    /// # let mine = Post { id: 1, author_id: 7, title: "Hi".into(), body: "Text".into(), locked: false };
+    /// # let theirs = Post { author_id: 8, ..mine.clone() };
+    /// # use mandate::{Context, RuleTemplate, Templates};
+    /// let stored = r#"[{"action": "update", "subject": "Post",
+    ///                   "conditions": {"author_id": "${user.id}"}}]"#;
+    /// let raw: Vec<RuleTemplate> = serde_json::from_str(stored).unwrap();
+    /// let templates = Templates::<Act, Sub>::compile(&raw, &["user"]).unwrap();
+    /// let ctx = Context::new().with("user", &serde_json::json!({"id": 7})).unwrap();
+    /// let bound = templates.bind(&ctx).unwrap();
+    /// assert!(bound.unresolved().is_empty());
+    /// let ability = Ability::<Act, Sub>::builder().extend(bound).build().unwrap();
+    /// assert!(ability.can(Act::Update, &mine));
+    /// assert!(!ability.can(Act::Update, &theirs));
+    /// ```
     pub fn bind(&self, ctx: &Context) -> Result<Bound<A, S>, BindError> {
         let values = self
             .slots

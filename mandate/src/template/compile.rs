@@ -171,6 +171,30 @@ impl<A: Action, S: Subject> Templates<A, S> {
     ///
     /// `roots` lists the context roots placeholders may name (`${root.…}`).
     /// Fails on the first invalid template; nothing is silently ignored.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
+    /// # #[derive(Clone, Debug, Resource)]
+    /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Action)]
+    /// # enum Act { Read, Update, #[action(manage)] Manage }
+    /// # #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Subject)]
+    /// # enum Sub { #[subject(resource = Post)] Post, Dashboard, #[subject(all)] All }
+    /// # let mine = Post { id: 1, author_id: 7, title: "Hi".into(), body: "Text".into(), locked: false };
+    /// # let theirs = Post { author_id: 8, ..mine.clone() };
+    /// # use mandate::{Context, RuleTemplate, Templates};
+    /// let stored = r#"[{"action": "update", "subject": "Post",
+    ///                   "conditions": {"author_id": "${user.id}"}}]"#;
+    /// let raw: Vec<RuleTemplate> = serde_json::from_str(stored).unwrap();
+    /// let templates = Templates::<Act, Sub>::compile(&raw, &["user"]).unwrap();
+    /// // a typo is an error, never silently ignored
+    /// let typo: Vec<RuleTemplate> = serde_json::from_str(
+    ///     r#"[{"action": "update", "subject": "Post", "conditions": {"autor_id": 1}}]"#,
+    /// ).unwrap();
+    /// assert!(Templates::<Act, Sub>::compile(&typo, &["user"]).is_err());
+    /// ```
     pub fn compile(raw: &[RuleTemplate], roots: &[&str]) -> Result<Self, LoadError> {
         let mut slots = Vec::new();
         let mut rules = Vec::with_capacity(raw.len());
