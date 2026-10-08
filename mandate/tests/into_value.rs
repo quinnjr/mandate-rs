@@ -46,5 +46,5 @@ fn enum_is_scalar() {
         Kind::Enum(&["draft", "published", "archived"])
     );
     assert_eq!(Scalar::value_ref(&Status::Draft), ValueRef::Str("draft"));
-    assert!(<<Option<Status> as Scalar>::Nullability as Nullability>::NULLABLE);
+    const _: () = assert!(<<Option<Status> as Scalar>::Nullability as Nullability>::NULLABLE);
 }

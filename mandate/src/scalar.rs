@@ -166,8 +166,8 @@ mod tests {
         assert_eq!(<i32 as ScalarValue>::KIND, Kind::Int);
         assert_eq!(<f32 as ScalarValue>::KIND, Kind::Float);
         assert_eq!(<String as ScalarValue>::KIND, Kind::String);
-        assert!(<<Option<i64> as Scalar>::Nullability as Nullability>::NULLABLE);
-        assert!(!<<i64 as Scalar>::Nullability as Nullability>::NULLABLE);
+        const _: () = assert!(<<Option<i64> as Scalar>::Nullability as Nullability>::NULLABLE);
+        const _: () = assert!(!<<i64 as Scalar>::Nullability as Nullability>::NULLABLE);
     }
 
     #[test]
