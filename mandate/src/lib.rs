@@ -24,7 +24,10 @@ pub mod value;
 pub use ability::Ability;
 pub use builder::{AbilityBuilder, GroupBuilder, IntoActions, IntoSubjects};
 pub use condition::{CmpOp, Cond, Condition, Quant, StrOp};
-pub use error::{BuildError, CheckError, EvalError, Forbidden, LoadError, LoadErrorKind};
+pub use error::{
+    BindError, BindErrorKind, BuildError, CheckError, EvalError, Forbidden, LoadError,
+    LoadErrorKind, Unresolved, UnresolvedOutcome,
+};
 pub use field::{Field, FieldRef, Opaque, Rel};
 pub use field_plan::{FieldPlan, FieldRule};
 pub use fieldset::{FieldMask, FieldSet};
@@ -38,7 +41,7 @@ pub use scalar::{
     IntoValue, NonNull, Nullability, Nullable, Ordered, Scalar, ScalarValue, Textual,
 };
 pub use schema::{CardinalityKind, FieldDef, FieldIdx, FieldKind, Kind, MAX_FIELDS, Schema};
-pub use template::{OneOrMany, RuleTemplate, TemplateValue, Templates};
+pub use template::{Bound, Context, OneOrMany, RuleTemplate, TemplateValue, Templates};
 pub use traits::{Action, DynResource, LoadState, Resource, Subject, SubjectResource};
 #[cfg(feature = "chrono")]
 pub use value::truncate_micros;

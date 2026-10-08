@@ -35,6 +35,11 @@ impl<A: Copy, S: Copy> Rule<A, S> {
         }
     }
 
+    /// The condition, for folding extended rules in `build()`.
+    pub(crate) fn condition_mut(&mut self) -> &mut Option<Condition> {
+        &mut self.condition
+    }
+
     /// The rule's action (possibly the manage wildcard).
     pub fn action(&self) -> A {
         self.action

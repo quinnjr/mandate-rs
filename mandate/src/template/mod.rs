@@ -1,7 +1,10 @@
-//! Serde data model for stored rule templates (database or config file form).
+//! Stored rule templates: the serde data model (database or config file
+//! form), compiling them against the schemas, and binding them per request.
 
+mod bind;
 mod compile;
 
+pub use bind::{Bound, Context};
 pub use compile::Templates;
 
 use std::collections::HashSet;

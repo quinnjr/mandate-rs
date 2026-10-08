@@ -151,6 +151,75 @@ pub enum LoadErrorKind {
     Malformed(String),
 }
 
+/// Why [`Templates::bind`](crate::Templates::bind) failed: a context value
+/// does not fit its placeholder. This indicates a context or schema bug, not
+/// missing data (missing data is [`Unresolved`]).
+///
+/// `Display` renders ``rule {rule_index} at `{path}`: {kind}``.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("rule {rule_index} at `{path}`: {kind}")]
+pub struct BindError {
+    /// Index of the template containing the placeholder.
+    pub rule_index: usize,
+    /// Where the placeholder is in the template, as in [`LoadError::path`]
+    /// (e.g. `conditions.org.id`); for an element of a list placeholder,
+    /// followed by its `[i]` index in the context's array.
+    pub path: String,
+    /// What is wrong with the value.
+    pub kind: BindErrorKind,
+}
+
+/// What is wrong with a context value (see [`BindError`]).
+///
+/// Values are checked as template literals are at compile time.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum BindErrorKind {
+    /// A value of the wrong JSON type for the field's kind, including an
+    /// array for a scalar placeholder or a non-array for a list placeholder
+    /// (whose `expected` kind is that of its elements).
+    #[error("expected {expected:?}, found {found}")]
+    TypeMismatch {
+        /// The kind the field requires.
+        expected: Kind,
+        /// The offending JSON value (`array`/`object` for compound values).
+        found: String,
+    },
+    /// An enum value that is not one of the field's variants.
+    #[error("unknown variant `{0}`")]
+    UnknownVariant(String),
+    /// A string that does not parse as the field's kind (UUID, RFC 3339
+    /// date-time, `YYYY-MM-DD` date), a kind whose feature is disabled, or
+    /// `null` inside a list (`"null in list"`).
+    #[error("invalid value: {0}")]
+    InvalidValue(String),
+}
+
+/// A placeholder that was missing from the context or `null` when binding,
+/// and what binding did instead (spec §6.4). Reported for diagnostics; it is
+/// not an error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unresolved {
+    /// Index of the template containing the placeholder.
+    pub rule_index: usize,
+    /// The placeholder's dotted path, root first (e.g. `user.manager_id`).
+    pub placeholder: String,
+    /// What binding did instead.
+    pub outcome: UnresolvedOutcome,
+}
+
+/// What binding did about an [`Unresolved`] placeholder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnresolvedOutcome {
+    /// The placeholder is optional (`${…?}`): its rule was dropped.
+    RuleDropped,
+    /// Its leaf became `false`, the value that grants the least access
+    /// (a leaf of a `can` rule, unless negated by `$not` or `$none`).
+    LeafFalse,
+    /// Its leaf became `true`, the value that grants the least access
+    /// (a leaf of a `cannot` rule, unless negated by `$not` or `$none`).
+    LeafTrue,
+}
+
 /// An action that the rules do not permit.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Forbidden<A, S> {

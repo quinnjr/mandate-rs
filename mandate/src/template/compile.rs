@@ -53,9 +53,7 @@ const MAX_DEPTH: usize = 32;
 /// to a request's context is then cheap.
 #[derive(Clone, Debug)]
 pub struct Templates<A, S> {
-    #[allow(dead_code)] // Read by `bind`, which is not implemented yet.
     pub(super) rules: Vec<CompiledRule<A, S>>,
-    #[allow(dead_code)] // Read by `bind`, which is not implemented yet.
     pub(super) slots: Vec<Slot>,
 }
 
@@ -65,7 +63,6 @@ pub(super) struct SlotId(pub(super) usize);
 
 /// One compiled template.
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // Read by `bind`, which is not implemented yet.
 pub(super) struct CompiledRule<A, S> {
     /// Index of the template in the list passed to `compile`.
     pub(super) source_index: usize,
@@ -714,38 +711,26 @@ impl Compiler<'_> {
                 },
             )
         };
-        let value = match v {
+        let scalar = match v {
             TemplateValue::Null => return Err(self.err(path, LoadErrorKind::NullNotAllowed)),
-            TemplateValue::Bool(b) if kind == Kind::Bool => Value::Bool(*b),
-            TemplateValue::Number(n) if kind == Kind::Int => {
-                Value::Int(n.as_i64().ok_or_else(mismatch)?)
-            }
-            TemplateValue::Number(n) if kind == Kind::Float => {
-                Value::Float(n.as_f64().ok_or_else(mismatch)?)
-            }
-            TemplateValue::String(s) => {
-                let text = match classify(s).map_err(|k| self.err(path, k))? {
-                    Text::Placeholder(p) => return Ok(Parsed::Placeholder(p)),
-                    Text::Literal(text) => text,
-                };
-                let parsed = match kind {
-                    Kind::String => Ok(Value::String(text.to_owned())),
-                    Kind::Enum(variants) if variants.contains(&text) => {
-                        Ok(Value::String(text.to_owned()))
-                    }
-                    Kind::Enum(_) => {
-                        return Err(self.err(path, LoadErrorKind::UnknownVariant(text.to_owned())));
-                    }
-                    Kind::Uuid => parse_uuid(text),
-                    Kind::DateTime => parse_datetime(text),
-                    Kind::Date => parse_date(text),
-                    Kind::Bool | Kind::Int | Kind::Float => return Err(mismatch()),
-                };
-                parsed.map_err(|reason| self.err(path, LoadErrorKind::InvalidValue(reason)))?
-            }
-            _ => return Err(mismatch()),
+            TemplateValue::Bool(b) => JsonScalar::Bool(*b),
+            TemplateValue::Number(n) => JsonScalar::Number(n),
+            TemplateValue::String(s) => match classify(s).map_err(|k| self.err(path, k))? {
+                Text::Placeholder(p) => return Ok(Parsed::Placeholder(p)),
+                Text::Literal(text) => JsonScalar::String(text),
+            },
+            TemplateValue::Array(_) | TemplateValue::Object(_) => return Err(mismatch()),
         };
-        Ok(Parsed::Lit(value))
+        match typed_value(kind, scalar) {
+            Ok(value) => Ok(Parsed::Lit(value)),
+            Err(KindError::TypeMismatch) => Err(mismatch()),
+            Err(KindError::UnknownVariant(name)) => {
+                Err(self.err(path, LoadErrorKind::UnknownVariant(name)))
+            }
+            Err(KindError::InvalidValue(reason)) => {
+                Err(self.err(path, LoadErrorKind::InvalidValue(reason)))
+            }
+        }
     }
 
     /// Records a placeholder slot after checking its root.
@@ -816,6 +801,55 @@ fn classify(s: &str) -> Result<Text<'_>, LoadErrorKind> {
         path: segments.collect(),
         optional,
     }))
+}
+
+/// A JSON scalar operand: a template literal (`$$` escape decoded) or a
+/// context value (taken verbatim).
+pub(super) enum JsonScalar<'v> {
+    /// A boolean.
+    Bool(bool),
+    /// A number.
+    Number(&'v serde_json::Number),
+    /// A string.
+    String(&'v str),
+}
+
+/// Why a [`JsonScalar`] is not a value of some kind.
+pub(super) enum KindError {
+    /// The JSON type does not fit the kind (or an integer kind's number is
+    /// not an `i64`).
+    TypeMismatch,
+    /// A string that is not one of the enum's variants.
+    UnknownVariant(String),
+    /// A string that does not parse as the kind; the reason.
+    InvalidValue(String),
+}
+
+/// Converts a JSON scalar to a value of `kind`. Template literals (at
+/// compile) and context values (at bind) follow these same rules: `Int`
+/// takes numbers that are `i64`s, `Float` any number, enums only their
+/// variant names, and `Uuid`/`DateTime`/`Date` parse their string forms.
+pub(super) fn typed_value(kind: Kind, v: JsonScalar<'_>) -> Result<Value, KindError> {
+    match (kind, v) {
+        (Kind::Bool, JsonScalar::Bool(b)) => Ok(Value::Bool(b)),
+        (Kind::Int, JsonScalar::Number(n)) => {
+            n.as_i64().map(Value::Int).ok_or(KindError::TypeMismatch)
+        }
+        (Kind::Float, JsonScalar::Number(n)) => {
+            n.as_f64().map(Value::Float).ok_or(KindError::TypeMismatch)
+        }
+        (Kind::String, JsonScalar::String(s)) => Ok(Value::String(s.to_owned())),
+        (Kind::Enum(variants), JsonScalar::String(s)) if variants.contains(&s) => {
+            Ok(Value::String(s.to_owned()))
+        }
+        (Kind::Enum(_), JsonScalar::String(s)) => Err(KindError::UnknownVariant(s.to_owned())),
+        (Kind::Uuid, JsonScalar::String(s)) => parse_uuid(s).map_err(KindError::InvalidValue),
+        (Kind::DateTime, JsonScalar::String(s)) => {
+            parse_datetime(s).map_err(KindError::InvalidValue)
+        }
+        (Kind::Date, JsonScalar::String(s)) => parse_date(s).map_err(KindError::InvalidValue),
+        _ => Err(KindError::TypeMismatch),
+    }
 }
 
 /// A short description of a JSON value for `TypeMismatch::found`.

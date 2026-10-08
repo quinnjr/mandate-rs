@@ -4,8 +4,8 @@ use std::borrow::Cow;
 
 use crate::condition::fold::{Folded, fold};
 use crate::{
-    Ability, Action, BuildError, Cond, Condition, FieldIdx, FieldMask, FieldRef, Resource, Rule,
-    Schema, Subject,
+    Ability, Action, Bound, BuildError, Cond, Condition, FieldIdx, FieldMask, FieldRef, Resource,
+    Rule, Schema, Subject,
 };
 
 /// Converts one or many actions into a list.
@@ -57,14 +57,33 @@ struct Group<A, S> {
     reason: Option<Cow<'static, str>>,
 }
 
+/// One step of the definition, in definition order.
+enum Entry<A, S> {
+    /// A `can`/`cannot` group.
+    Group(Group<A, S>),
+    /// Rules added by `extend`, already expanded; each condition is over its
+    /// subject's schema.
+    Bound(Vec<Rule<A, S>>),
+}
+
 /// Collects rule groups and builds an [`Ability`].
 pub struct AbilityBuilder<A, S> {
-    groups: Vec<Group<A, S>>,
+    entries: Vec<Entry<A, S>>,
 }
 
 impl<A: Action, S: Subject> AbilityBuilder<A, S> {
     pub(crate) fn new() -> Self {
-        Self { groups: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    /// Adds rules bound from stored templates, after the rules defined so
+    /// far and before any defined later. `build()` folds them like the
+    /// others.
+    pub fn extend(mut self, bound: Bound<A, S>) -> Self {
+        self.entries.push(Entry::Bound(bound.into_rules()));
+        self
     }
 
     /// Starts a group of `can` rules.
@@ -73,7 +92,7 @@ impl<A: Action, S: Subject> AbilityBuilder<A, S> {
         actions: impl IntoActions<A>,
         subjects: impl IntoSubjects<S>,
     ) -> GroupBuilder<A, S> {
-        GroupBuilder::start(self.groups, false, actions.into_vec(), subjects.into_vec())
+        GroupBuilder::start(self.entries, false, actions.into_vec(), subjects.into_vec())
     }
 
     /// Starts a group of `cannot` rules.
@@ -82,24 +101,24 @@ impl<A: Action, S: Subject> AbilityBuilder<A, S> {
         actions: impl IntoActions<A>,
         subjects: impl IntoSubjects<S>,
     ) -> GroupBuilder<A, S> {
-        GroupBuilder::start(self.groups, true, actions.into_vec(), subjects.into_vec())
+        GroupBuilder::start(self.entries, true, actions.into_vec(), subjects.into_vec())
     }
 
     /// Validates, folds, expands, and indexes every group.
     pub fn build(self) -> Result<Ability<A, S>, BuildError> {
-        build(self.groups)
+        build(self.entries)
     }
 }
 
 /// The group under construction; `when`, `fields`, `because` apply to every
 /// (action, subject) pair in it.
 pub struct GroupBuilder<A, S> {
-    done: Vec<Group<A, S>>,
+    done: Vec<Entry<A, S>>,
     cur: Group<A, S>,
 }
 
 impl<A: Action, S: Subject> GroupBuilder<A, S> {
-    fn start(done: Vec<Group<A, S>>, inverted: bool, actions: Vec<A>, subjects: Vec<S>) -> Self {
+    fn start(done: Vec<Entry<A, S>>, inverted: bool, actions: Vec<A>, subjects: Vec<S>) -> Self {
         let cur = Group {
             actions,
             subjects,
@@ -131,9 +150,18 @@ impl<A: Action, S: Subject> GroupBuilder<A, S> {
         self
     }
 
-    fn finish(mut self) -> Vec<Group<A, S>> {
-        self.done.push(self.cur);
+    fn finish(mut self) -> Vec<Entry<A, S>> {
+        self.done.push(Entry::Group(self.cur));
         self.done
+    }
+
+    /// Finishes this group, then adds rules bound from stored templates
+    /// (see [`AbilityBuilder::extend`]).
+    pub fn extend(self, bound: Bound<A, S>) -> AbilityBuilder<A, S> {
+        AbilityBuilder {
+            entries: self.finish(),
+        }
+        .extend(bound)
     }
 
     /// Finishes this group and starts a `can` group.
@@ -263,9 +291,47 @@ fn resolve<A: Action, S: Subject>(
     })
 }
 
-fn build<A: Action, S: Subject>(groups: Vec<Group<A, S>>) -> Result<Ability<A, S>, BuildError> {
+/// Folds the condition of a rule added by `extend`; `None` drops the rule.
+///
+/// Its condition is already over its subject's schema (templates are
+/// compiled against it), so only the checks that need no typed condition
+/// remain.
+fn fold_bound<A: Action, S: Subject>(mut r: Rule<A, S>) -> Result<Option<Rule<A, S>>, BuildError> {
+    let Some(c) = r.condition_mut().take() else {
+        return Ok(Some(r));
+    };
+    let subject = r.subject();
+    let schema = match subject.schema() {
+        Some(schema) if S::ALL != Some(subject) => schema,
+        _ => {
+            return Err(BuildError::ConditionsNotAllowed {
+                subject: subject.name(),
+            });
+        }
+    };
+    check_finite(&c)?;
+    Ok(match fold(c, schema) {
+        Folded::False => None,
+        Folded::True => Some(r),
+        Folded::Cond(c) => {
+            *r.condition_mut() = Some(c);
+            Some(r)
+        }
+    })
+}
+
+fn build<A: Action, S: Subject>(entries: Vec<Entry<A, S>>) -> Result<Ability<A, S>, BuildError> {
     let mut rules = Vec::new();
-    for mut g in groups {
+    for entry in entries {
+        let mut g = match entry {
+            Entry::Group(g) => g,
+            Entry::Bound(bound) => {
+                for r in bound {
+                    rules.extend(fold_bound(r)?);
+                }
+                continue;
+            }
+        };
         let Some((cond, fields)) = resolve(&mut g)? else {
             continue;
         };
