@@ -31,3 +31,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.85
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-features --lib
+      # The trybuild snapshots (the `ui` test) are specific to the stable
+      # compiler. `--exact` keeps `--skip` from matching every test whose
+      # name merely contains "ui" (e.g. "built").
+      - run: cargo test --workspace --all-features -- --skip ui --exact
