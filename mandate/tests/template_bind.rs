@@ -527,3 +527,33 @@ fn extend_preserves_definition_order() {
         ]
     );
 }
+
+/// `"conditions": null` binds an unconditional rule and `"fields": null` a
+/// rule on every field, exactly like omitting them.
+#[test]
+fn null_conditions_and_fields_bind_like_omitted() {
+    let omitted = bind(r#"{"action":"update","subject":"Post"}"#, json!({}));
+    let null = bind(
+        r#"{"action":"update","subject":"Post","conditions":null,"fields":null}"#,
+        json!({}),
+    );
+    assert_eq!(null.rules(), omitted.rules());
+    let rule = &null.rules()[0];
+    assert!(rule.condition().is_none() && rule.fields().is_none());
+
+    let a = build(null);
+    let p = post();
+    assert!(a.can(Action::Update, &p));
+    assert!(a.can_field(Action::Update, &p, Post::METADATA));
+    assert_eq!(
+        a.permitted_fields(Action::Update, &p).unwrap().mask(),
+        mandate::FieldMask::all(13)
+    );
+    // A null-conditions `cannot` denies unconditionally.
+    let a = build(bind(
+        r#"{"action":"update","subject":"Post"},
+           {"action":"update","subject":"Post","inverted":true,"conditions":null}"#,
+        json!({}),
+    ));
+    assert!(!a.can(Action::Update, &p));
+}

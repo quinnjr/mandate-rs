@@ -360,3 +360,32 @@ fn accepted_forms() {
     )
     .unwrap();
 }
+
+/// `"conditions": null` and `"fields": null` mean the same as leaving the
+/// key out (as in CASL): an unconditional rule on every field.
+#[test]
+fn null_conditions_and_fields_mean_omitted() {
+    let omitted = rule(r#"{"action":"read","subject":"Post"}"#);
+    let null = rule(r#"{"action":"read","subject":"Post","conditions":null,"fields":null}"#);
+    assert_eq!(null, omitted);
+    assert!(null.conditions.is_none() && null.fields.is_none());
+    // So they are allowed where conditions and fields are not.
+    for subject in ["All", "Dashboard"] {
+        let json =
+            format!(r#"{{"action":"read","subject":"{subject}","conditions":null,"fields":null}}"#);
+        compile(&json).unwrap();
+    }
+    // Unlike an empty list or a non-object condition.
+    assert_eq!(
+        compile(r#"{"action":"read","subject":"Post","fields":[]}"#)
+            .unwrap_err()
+            .kind,
+        LoadErrorKind::Empty("fields")
+    );
+    assert!(matches!(
+        compile(r#"{"action":"read","subject":"Post","conditions":[]}"#)
+            .unwrap_err()
+            .kind,
+        LoadErrorKind::Malformed(_)
+    ));
+}

@@ -16,6 +16,15 @@ use serde::ser::{SerializeMap, SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
 
 /// A stored rule template, before compilation against a schema.
+///
+/// Deserialize templates with `serde_json::from_str` from `json` or `text`
+/// storage: the condition document rejects duplicate keys and keeps key
+/// order. Passing through `serde_json::Value` or a Postgres `jsonb` column
+/// first loses both (see the crate docs, "Storing templates").
+///
+/// As in CASL, `"conditions": null` means the same as no `conditions` (an
+/// unconditional rule), and `"fields": null` the same as no `fields` (every
+/// field). An empty `fields` list is an error.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuleTemplate {
@@ -23,10 +32,11 @@ pub struct RuleTemplate {
     pub action: OneOrMany,
     /// Subject name or names the rule applies to.
     pub subject: OneOrMany,
-    /// Optional condition document; may contain placeholders.
+    /// Optional condition document; may contain placeholders. Absent or
+    /// `null`: the rule is unconditional.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conditions: Option<TemplateValue>,
-    /// Optional field restriction.
+    /// Optional field restriction. Absent or `null`: every field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fields: Option<Vec<String>>,
     /// Whether the rule is a prohibition.
