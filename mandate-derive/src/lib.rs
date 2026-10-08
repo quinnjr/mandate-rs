@@ -5,6 +5,7 @@ mod into_value;
 mod naming;
 mod resource;
 mod subject;
+mod unit_enum;
 
 use proc_macro::TokenStream;
 use syn::{DeriveInput, parse_macro_input};
@@ -48,9 +49,10 @@ pub fn derive_resource(input: TokenStream) -> TokenStream {
 
 /// Derives `Action` for a unit-only enum.
 ///
-/// Names default to the `snake_case` of the variant; `#[action(rename = "x")]`
-/// overrides. At most one variant may be marked `#[action(manage)]`, which
-/// matches every action. Derive `Clone, Copy, Debug, PartialEq, Eq` yourself.
+/// Names default to the `snake_case` of the variant (a raw identifier
+/// without its `r#`); `#[action(rename = "x")]` overrides. At most one
+/// variant may be marked `#[action(manage)]`, which matches every action.
+/// Derive `Clone, Copy, Debug, PartialEq, Eq` yourself.
 #[proc_macro_derive(Action, attributes(action))]
 pub fn derive_action(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -61,10 +63,11 @@ pub fn derive_action(input: TokenStream) -> TokenStream {
 
 /// Derives `Subject` for a unit-only enum.
 ///
-/// Names default to the variant identifier; `#[subject(rename = "x")]`
-/// overrides. `#[subject(resource = T)]` binds a `Resource` type to the variant
-/// (generating `SubjectResource` for `T`); `#[subject(all)]` marks the single
-/// variant matching every subject and cannot be combined with `resource`.
+/// Names default to the variant identifier (a raw identifier without its
+/// `r#`); `#[subject(rename = "x")]` overrides. `#[subject(resource = T)]`
+/// binds a `Resource` type to the variant (generating `SubjectResource` for
+/// `T`); `#[subject(all)]` marks the single variant matching every subject
+/// and cannot be combined with `resource`.
 /// Derive `Clone, Copy, Debug, PartialEq, Eq` yourself.
 #[proc_macro_derive(Subject, attributes(subject))]
 pub fn derive_subject(input: TokenStream) -> TokenStream {

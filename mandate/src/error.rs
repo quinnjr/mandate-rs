@@ -6,24 +6,51 @@ use crate::{Action, Kind, Subject};
 
 /// Why a condition could not be evaluated against a resource.
 ///
-/// Evaluation fails closed: neither case is ever coerced to `false`, since
-/// that could make a `cannot` rule silently stop applying.
+/// Evaluation fails closed: no error is ever coerced to `false`, since that
+/// could make a `cannot` rule silently stop applying.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum EvalError {
     /// A field or relation the condition reads is not loaded.
     #[error("`{path}` is not loaded")]
+    #[non_exhaustive]
     NotLoaded {
         /// Dotted path from the checked resource, e.g. `org.name`.
         path: String,
     },
     /// The resource's schema is not the schema the condition was built for.
     #[error("resource schema `{found}` does not match subject schema `{expected}`")]
+    #[non_exhaustive]
     SchemaMismatch {
         /// Name of the schema the condition was built for.
         expected: &'static str,
         /// Name of the resource's schema.
         found: &'static str,
+    },
+    /// A condition or check refers to a field in a way the schema (or the
+    /// resource) does not support:
+    ///
+    /// - a relation quantifier on a field that is not a relation;
+    /// - a scalar leaf on a field that is not a scalar, or a resource value
+    ///   whose [`ValueRef`](crate::ValueRef) variant does not match the
+    ///   field's [`Kind`];
+    /// - a field reference ([`FieldRef`](crate::FieldRef)) to an index the
+    ///   schema does not have (path `#<index>`);
+    /// - a condition that the filter [`Plan`](crate::Plan) cannot express.
+    ///
+    /// Unreachable for validated rules and conforming resources: `build()`
+    /// and [`Templates::compile`](crate::Templates::compile) reject such
+    /// conditions, and a [`DynResource`](crate::DynResource) that keeps its
+    /// contract returns values of its fields' kinds. The one exception is a
+    /// `FieldRef` built by hand ([`FieldRef::new`](crate::FieldRef::new))
+    /// and passed to a field-level check. Whatever the cause, it keeps the
+    /// check failing closed.
+    #[error("the condition uses `{path}` in a way its schema does not support")]
+    #[non_exhaustive]
+    InvalidCondition {
+        /// Dotted path from the checked resource, e.g. `org.name`; a field
+        /// index the schema does not have is written `#<index>`.
+        path: String,
     },
 }
 
@@ -33,6 +60,7 @@ pub enum EvalError {
 pub enum BuildError {
     /// A condition was built for a different resource than the rule's subject.
     #[error("condition on `{condition_schema}` does not match subject `{subject}`")]
+    #[non_exhaustive]
     SubjectMismatch {
         /// Name of the rule's subject.
         subject: &'static str,
@@ -43,12 +71,14 @@ pub enum BuildError {
     #[error(
         "conditions are not allowed on subject `{subject}` (needs a single resource-bound subject)"
     )]
+    #[non_exhaustive]
     ConditionsNotAllowed {
         /// Name of the offending subject.
         subject: &'static str,
     },
     /// A field belongs to a different resource than the rule's subjects.
     #[error("field of `{field_schema}` is not a field of subject `{subject}`")]
+    #[non_exhaustive]
     ForeignField {
         /// Name of the offending subject.
         subject: &'static str,
@@ -57,6 +87,7 @@ pub enum BuildError {
     },
     /// An actions, subjects, or fields list was empty.
     #[error("empty list of {what}")]
+    #[non_exhaustive]
     Empty {
         /// Which list: `"actions"`, `"subjects"`, or `"fields"`.
         what: &'static str,
@@ -76,6 +107,7 @@ pub enum BuildError {
     /// quantifiers only on relations, scalar operators only on scalars, and
     /// no condition on an opaque field.
     #[error("invalid use of field `{path}` on subject `{subject}`: {reason}")]
+    #[non_exhaustive]
     InvalidField {
         /// Name of the rule's subject.
         subject: &'static str,
@@ -88,6 +120,7 @@ pub enum BuildError {
     },
     /// A condition holds a value that can never be compared (non-finite float).
     #[error("invalid value: {reason}")]
+    #[non_exhaustive]
     InvalidValue {
         /// What is wrong with the value.
         reason: String,
@@ -100,6 +133,7 @@ pub enum BuildError {
     #[error(
         "inconsistent {which} implementation: `all()` must list `COUNT` values indexed `0..COUNT`, and rules may only name listed values"
     )]
+    #[non_exhaustive]
     InvalidEnum {
         /// `"action"` or `"subject"`.
         which: &'static str,
@@ -111,8 +145,10 @@ pub enum BuildError {
     /// (§7.6) one level deeper, so the limit keeps planning within a small,
     /// fixed stack. Rules from `manage`/`all` count in every pair they cover.
     #[error(
-        "the rules for `{action}` on `{subject}` switch between can and cannot {count} times (at most 256)"
+        "the rules for `{action}` on `{subject}` switch between can and cannot {count} times (at most {max})",
+        max = crate::condition::limits::MAX_ALTERNATIONS
     )]
+    #[non_exhaustive]
     TooManyAlternations {
         /// Name of the subject.
         subject: &'static str,
@@ -128,7 +164,11 @@ pub enum BuildError {
     /// leaves are at depth 0. Conditions are evaluated, folded and planned
     /// recursively, so the limit keeps them within a small, fixed stack.
     /// `Cond::and`/`Cond::or` chains do not nest: they extend one group.
-    #[error("a condition on `{subject}` is nested {depth} levels deep (at most 64)")]
+    #[error(
+        "a condition on `{subject}` is nested {depth} levels deep (at most {max})",
+        max = crate::condition::limits::MAX_BUILD_DEPTH
+    )]
+    #[non_exhaustive]
     TooDeep {
         /// Name of the rule's subject.
         subject: &'static str,
@@ -142,6 +182,7 @@ pub enum BuildError {
 /// `Display` renders ``rule {rule_index} at `{path}`: {kind}``.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("rule {rule_index} at `{path}`: {kind}")]
+#[non_exhaustive]
 pub struct LoadError {
     /// Index of the offending template in the list passed to `compile`.
     pub rule_index: usize,
@@ -182,6 +223,7 @@ pub enum LoadErrorKind {
     UnknownVariant(String),
     /// A literal of the wrong JSON type for the field's kind.
     #[error("expected {expected:?}, found {found}")]
+    #[non_exhaustive]
     TypeMismatch {
         /// The kind the field (or operator) requires.
         expected: Kind,
@@ -191,6 +233,7 @@ pub enum LoadErrorKind {
     /// The operator is not defined on the field's kind (e.g. ordering on a
     /// string, or text operators on an enum).
     #[error("operator `{op}` is not allowed on {kind:?} fields")]
+    #[non_exhaustive]
     OperatorNotAllowed {
         /// The operator.
         op: String,
@@ -229,6 +272,7 @@ pub enum LoadErrorKind {
 /// `Display` renders ``rule {rule_index} at `{path}`: {kind}``.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("rule {rule_index} at `{path}`: {kind}")]
+#[non_exhaustive]
 pub struct BindError {
     /// Index of the template containing the placeholder.
     pub rule_index: usize,
@@ -250,6 +294,7 @@ pub enum BindErrorKind {
     /// array for a scalar placeholder or a non-array for a list placeholder
     /// (whose `expected` kind is that of its elements).
     #[error("expected {expected:?}, found {found}")]
+    #[non_exhaustive]
     TypeMismatch {
         /// The kind the field requires.
         expected: Kind,
@@ -270,6 +315,7 @@ pub enum BindErrorKind {
 /// and what binding did instead (spec §6.4). Reported for diagnostics; it is
 /// not an error.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Unresolved {
     /// Index of the template containing the placeholder.
     pub rule_index: usize,
@@ -277,6 +323,8 @@ pub struct Unresolved {
     pub placeholder: String,
     /// What binding did instead.
     pub outcome: UnresolvedOutcome,
+    /// Whether the placeholder's rule is a prohibition (`cannot`).
+    pub inverted: bool,
 }
 
 /// What binding did about an [`Unresolved`] placeholder.
@@ -295,6 +343,7 @@ pub enum UnresolvedOutcome {
 
 /// An action that the rules do not permit.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Forbidden<A, S> {
     /// The denied action.
     pub action: A,
@@ -327,7 +376,8 @@ impl<A: Action, S: Subject> std::error::Error for Forbidden<A, S> {}
 pub enum CheckError<A, S> {
     /// The rules deny the action.
     Forbidden(Forbidden<A, S>),
-    /// The rules could not be evaluated (unloaded data or schema mismatch).
+    /// The rules could not be evaluated (unloaded data, a schema mismatch,
+    /// or an invalid condition).
     Unresolvable(EvalError),
 }
 
@@ -352,5 +402,33 @@ impl<A: Action, S: Subject> std::error::Error for CheckError<A, S> {
 impl<A, S> From<Forbidden<A, S>> for CheckError<A, S> {
     fn from(e: Forbidden<A, S>) -> Self {
         CheckError::Forbidden(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The limits in the messages come from the constants; the text is the
+    /// one the constants replaced.
+    #[test]
+    fn limit_messages_name_the_limits() {
+        let deep = BuildError::TooDeep {
+            subject: "Post",
+            depth: 65,
+        };
+        assert_eq!(
+            deep.to_string(),
+            "a condition on `Post` is nested 65 levels deep (at most 64)"
+        );
+        let alternating = BuildError::TooManyAlternations {
+            subject: "Post",
+            action: "read",
+            count: 257,
+        };
+        assert_eq!(
+            alternating.to_string(),
+            "the rules for `read` on `Post` switch between can and cannot 257 times (at most 256)"
+        );
     }
 }

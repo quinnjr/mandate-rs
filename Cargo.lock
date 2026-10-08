@@ -193,6 +193,7 @@ dependencies = [
  "chrono",
  "mandate-derive",
  "proptest",
+ "rustversion",
  "serde",
  "serde_json",
  "thiserror",

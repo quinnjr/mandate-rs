@@ -10,7 +10,9 @@
 mod common;
 
 use common::fixture::*;
+use common::shape::{canonical, plan_shaped};
 use common::strategies::*;
+use common::unresolved::as_tuples;
 use mandate::{
     Ability, Access, CheckError, Condition, Context, EvalError, FieldDef, FieldIdx, FieldKind,
     FieldMask, Projection, Quant, RelationProjection, Resource as _, RuleTemplate, Schema,
@@ -18,6 +20,9 @@ use mandate::{
 };
 use proptest::prelude::*;
 use proptest::sample::Index;
+use proptest::test_runner::TestRunner;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::Relaxed;
 
 type Ab = Ability<Action, TSubject>;
 
@@ -32,6 +37,8 @@ mod model {
         Int(i64),
         Float(f64),
         Str(&'a str),
+        Uuid(uuid::Uuid),
+        Date(chrono::NaiveDate),
     }
 
     /// A fully loaded instance.
@@ -72,6 +79,10 @@ mod model {
                 })
             } else if f == TPost::SCORE.idx() {
                 Mv::Float(self.score)
+            } else if f == TPost::OWNER.idx() {
+                Mv::Uuid(self.owner)
+            } else if f == TPost::DUE.idx() {
+                self.due.map_or(Mv::Null, Mv::Date)
             } else {
                 panic!("not a TPost scalar: {f:?}")
             }
@@ -154,6 +165,8 @@ mod model {
             (Mv::Int(a), Value::Int(b)) => a == b,
             (Mv::Float(a), Value::Float(b)) => a == b,
             (Mv::Str(a), Value::String(b)) => *a == b.as_str(),
+            (Mv::Uuid(a), Value::Uuid(b)) => a == b,
+            (Mv::Date(a), Value::Date(b)) => a == b,
             (_, x) => panic!("operand {x:?} does not fit the field"),
         })
     }
@@ -163,6 +176,7 @@ mod model {
             (Mv::Null, _) => None,
             (Mv::Int(a), Value::Int(b)) => Some(a.cmp(b)),
             (Mv::Float(a), Value::Float(b)) => a.partial_cmp(b),
+            (Mv::Date(a), Value::Date(b)) => Some(a.cmp(b)),
             (_, x) => panic!("operand {x:?} is not ordered against the field"),
         }
     }
@@ -270,44 +284,6 @@ mod model {
         }
         set
     }
-}
-
-/// §5.1 canonical form: groups have two or more distinct children and no
-/// child of their own kind, no constants, no double negation, and
-/// `In`/`NotIn` have values.
-fn canonical(c: &Condition) -> bool {
-    fn group(cs: &[Condition], same: fn(&Condition) -> bool) -> bool {
-        cs.len() >= 2
-            && !cs.iter().any(same)
-            && cs.iter().enumerate().all(|(i, c)| !cs[..i].contains(c))
-            && cs.iter().all(canonical)
-    }
-    match c {
-        Condition::And(cs) => group(cs, |c| matches!(c, Condition::And(_))),
-        Condition::Or(cs) => group(cs, |c| matches!(c, Condition::Or(_))),
-        Condition::Not(inner) => !matches!(**inner, Condition::Not(_)) && canonical(inner),
-        Condition::In { values, .. } | Condition::NotIn { values, .. } => !values.is_empty(),
-        Condition::Rel { cond, .. } => cond.as_deref().is_none_or(canonical),
-        _ => true,
-    }
-}
-
-/// §8 restricted NNF on top of the canonical form: no `Every`, and `Not`
-/// only directly above a `Str` leaf.
-fn plan_shaped(c: &Condition) -> bool {
-    fn nnf(c: &Condition) -> bool {
-        match c {
-            Condition::Not(inner) => matches!(**inner, Condition::Str { .. }),
-            Condition::Rel {
-                quant: Quant::Every,
-                ..
-            } => false,
-            Condition::Rel { cond, .. } => cond.as_deref().is_none_or(nnf),
-            Condition::And(cs) | Condition::Or(cs) => cs.iter().all(nnf),
-            _ => true,
-        }
-    }
-    canonical(c) && nnf(c)
 }
 
 /// A check's outcome: allowed, denied, or unresolvable.
@@ -507,6 +483,132 @@ fn round_trip(rules: &str, roots: &[&str], ctx: &Context) -> (Ab, Vec<Unresolved
     (ability, unresolved)
 }
 
+/// §10.1: on partially loaded instances, `can` and the plan never give two
+/// different answers; errors are `NotLoaded` and `can` fails closed.
+///
+/// A property like the ones in `proptest!` below, run by hand so that it can
+/// also count the cases where `check` or the plan was unresolvable: the run
+/// must reach that branch. `p1_partial_errors_are_not_loaded` pins it
+/// deterministically.
+#[test]
+fn p1_partial_never_contradicts() {
+    let (cases, checks_failed, plans_failed) = (
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    );
+    let mut runner = TestRunner::new(ProptestConfig {
+        test_name: Some(concat!(module_path!(), "::p1_partial_never_contradicts")),
+        source_file: Some(file!()),
+        ..ProptestConfig::default()
+    });
+    let result = runner.run(&(rules(), tpost(false)), |(rs, p)| {
+        let a = build(&rs);
+        let (mut check_failed, mut plan_failed) = (false, false);
+        for act in ACTIONS {
+            let checked = verdict(a.check(act, &p));
+            let planned = admits(&access(&a, act)?, &p);
+            if let (Ok(x), Ok(y)) = (&checked, &planned) {
+                prop_assert_eq!(x, y, "{:?}", act);
+            }
+            for r in [&checked, &planned] {
+                if let Err(e) = r {
+                    prop_assert!(matches!(e, EvalError::NotLoaded { .. }), "{:?}", e);
+                }
+            }
+            prop_assert_eq!(a.can(act, &p), checked == Ok(true));
+            check_failed |= checked.is_err();
+            plan_failed |= planned.is_err();
+        }
+        cases.fetch_add(1, Relaxed);
+        checks_failed.fetch_add(usize::from(check_failed), Relaxed);
+        plans_failed.fetch_add(usize::from(plan_failed), Relaxed);
+        Ok(())
+    });
+    if let Err(e) = result {
+        panic!("{e}\n{runner}");
+    }
+    let (cases, checks_failed, plans_failed) = (
+        cases.into_inner(),
+        checks_failed.into_inner(),
+        plans_failed.into_inner(),
+    );
+    // About a quarter of the cases have an unresolvable check and a sixth
+    // an unresolvable plan, so 128 cases miss either with probability
+    // below 1e-10. Smaller runs (`PROPTEST_CASES`) skip this.
+    if cases >= 128 {
+        assert!(
+            checks_failed > 0 && plans_failed > 0,
+            "{cases} cases: {checks_failed} unresolvable checks, {plans_failed} unresolvable plans"
+        );
+    }
+}
+
+/// The error branch of `p1_partial_never_contradicts`, deterministically:
+/// a condition on an unloaded scalar, an unloaded to-one or an unloaded
+/// to-many relation makes `check` and the plan fail with `NotLoaded` at that
+/// field, in a `can` rule and in a `cannot` rule, and `can` denies.
+#[test]
+fn p1_partial_errors_are_not_loaded() {
+    let full = loaded_tpost();
+    let cases = [
+        (
+            TPost::TITLE.eq("Hello"),
+            TPost {
+                loaded: Loaded(vec!["title"]),
+                ..full.clone()
+            },
+            "title",
+        ),
+        (
+            TPost::ORG.then(TOrg::NAME.eq("Acme")),
+            TPost {
+                org: Lazy::NotLoaded,
+                ..full.clone()
+            },
+            "org",
+        ),
+        (
+            TPost::TAGS.none(TTag::ID.eq(1)),
+            TPost {
+                tags: Lazy::NotLoaded,
+                ..full.clone()
+            },
+            "tags",
+        ),
+    ];
+    for (cond, p, path) in cases {
+        let not_loaded = |r: &Result<bool, EvalError>| matches!(r, Err(EvalError::NotLoaded { path: x, .. }) if x == path);
+        let spec = |inverted, cond| RuleSpec {
+            inverted,
+            actions: vec![Action::Read],
+            cond,
+            fields: None,
+            reason: None,
+        };
+        // `can read when c`, and `can read; cannot read when c`: on the full
+        // instance `c` holds, so the first allows and the second denies.
+        for (rs, on_full) in [
+            (vec![spec(false, Some(cond.clone()))], true),
+            (
+                vec![spec(false, None), spec(true, Some(cond.clone()))],
+                false,
+            ),
+        ] {
+            let a = build(&rs);
+            assert_eq!(verdict(a.check(Action::Read, &full)), Ok(on_full), "{rs:?}");
+            let checked = verdict(a.check(Action::Read, &p));
+            assert!(not_loaded(&checked), "{rs:?}: {checked:?}");
+            assert!(!a.can(Action::Read, &p), "{rs:?}");
+            let access = a
+                .access::<TPost>(Action::Read)
+                .expect("TPost's schema is its subject's");
+            let planned = admits(&access, &p);
+            assert!(not_loaded(&planned), "{rs:?}: {planned:?}");
+        }
+    }
+}
+
 proptest! {
     /// §10.1: for fully loaded instances, the filter plan admits exactly
     /// the instances `can` allows, and both match the model (also per field).
@@ -525,26 +627,6 @@ proptest! {
                     "{:?} {:?}", act, f
                 );
             }
-        }
-    }
-
-    /// §10.1: on partially loaded instances, `can` and the plan never give
-    /// two different answers; errors are `NotLoaded` and `can` fails closed.
-    #[test]
-    fn p1_partial_never_contradicts(rs in rules(), p in tpost(false)) {
-        let a = build(&rs);
-        for act in ACTIONS {
-            let checked = verdict(a.check(act, &p));
-            let planned = admits(&access(&a, act)?, &p);
-            if let (Ok(x), Ok(y)) = (&checked, &planned) {
-                prop_assert_eq!(x, y, "{:?}", act);
-            }
-            for r in [&checked, &planned] {
-                if let Err(e) = r {
-                    prop_assert!(matches!(e, EvalError::NotLoaded { .. }), "{:?}", e);
-                }
-            }
-            prop_assert_eq!(a.can(act, &p), checked == Ok(true));
         }
     }
 
@@ -680,40 +762,40 @@ proptest! {
         let value = context_value(&old);
         // The least-access constant: false in a `can` rule, true in a
         // `cannot` rule, swapped under negative polarity (§6.4).
-        let expected = Unresolved {
+        let expected = (
             rule_index,
-            placeholder: "ctx.v".into(),
-            outcome: if inverted == negative {
+            "ctx.v",
+            if inverted == negative {
                 UnresolvedOutcome::LeafFalse
             } else {
                 UnresolvedOutcome::LeafTrue
             },
-        };
+        );
         let template = serde_json::to_string(&raw).expect("templates serialize");
 
         let ctx = Context::new().with("ctx", &serde_json::json!({ "v": value })).expect("json");
-        let (resolved, unresolved) = round_trip(&template, &["ctx"], &ctx);
-        prop_assert_eq!(unresolved, vec![]);
+        let (resolved, leftovers) = round_trip(&template, &["ctx"], &ctx);
+        prop_assert_eq!(leftovers, vec![]);
         prop_assert_eq!(resolved.rules(), original.rules(), "template: {}", template);
-        let (unresolved, reported) = round_trip(&template, &["ctx"], &Context::empty());
-        prop_assert_eq!(reported, vec![expected], "template: {}", template);
+        let (restricted, reported) = round_trip(&template, &["ctx"], &Context::empty());
+        prop_assert_eq!(as_tuples(&reported), vec![expected], "template: {}", template);
 
         for act in ACTIONS {
             let can = |a: &Ab| verdict(a.check(act, &p)).expect("fully loaded");
-            prop_assert!(!can(&unresolved) || can(&resolved), "{:?} can; {}", act, template);
+            prop_assert!(!can(&restricted) || can(&resolved), "{:?} can; {}", act, template);
 
             let admitted = |a: &Ab| {
                 let acc = a.access::<TPost>(act).expect("TPost's schema is its subject's");
                 admits(&acc, &p).expect("fully loaded")
             };
             prop_assert!(
-                !admitted(&unresolved) || admitted(&resolved),
+                !admitted(&restricted) || admitted(&resolved),
                 "{:?} access; {}", act, template
             );
 
             let fields = |a: &Ab| a.permitted_fields(act, &p).expect("fully loaded").mask();
             prop_assert!(
-                fields(&unresolved).is_subset(&fields(&resolved)),
+                fields(&restricted).is_subset(&fields(&resolved)),
                 "{:?} permitted_fields; {}", act, template
             );
 
@@ -727,7 +809,7 @@ proptest! {
                 fp.permitted(|i| matched[i]).mask()
             };
             prop_assert!(
-                planned(&unresolved).is_subset(&planned(&resolved)),
+                planned(&restricted).is_subset(&planned(&resolved)),
                 "{:?} field_plan; {}", act, template
             );
         }

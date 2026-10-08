@@ -121,7 +121,9 @@
 //! ```rust
 //! # #[cfg(feature = "derive")]
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use mandate::{Ability, Action, Context, Resource, RuleTemplate, Subject, Templates};
+//! use mandate::{
+//!     Ability, Action, Context, Resource, RuleTemplate, Subject, Templates, UnresolvedOutcome,
+//! };
 //!
 //! #[derive(Clone, Debug, Resource)]
 //! struct Post { id: i64, author_id: i64 }
@@ -146,8 +148,18 @@
 //! // per request
 //! let ctx = Context::new().with("user", &serde_json::json!({ "id": 7 }))?;
 //! let bound = templates.bind(&ctx)?;
-//! for unresolved in bound.unresolved() {
-//!     eprintln!("unresolved placeholder: {unresolved:?}");
+//! // The `cannot` rules whose optional placeholder may legitimately be absent.
+//! const OPTIONAL_DENIES: &[&str] = &["user.blocked_author"];
+//! for u in bound.unresolved() {
+//!     // Any other dropped `cannot` rule no longer denies anything: fail
+//!     // the request (or at least log and alert) rather than grant more.
+//!     if u.outcome == UnresolvedOutcome::RuleDropped
+//!         && u.inverted
+//!         && !OPTIONAL_DENIES.contains(&u.placeholder.as_str())
+//!     {
+//!         return Err(format!("deny rule dropped: {u:?}").into());
+//!     }
+//!     eprintln!("unresolved placeholder: {u:?}");
 //! }
 //! let ability = Ability::builder()
 //!     .extend(bound)
@@ -168,6 +180,19 @@
 //! rule becomes `true` (unless negated by `$not` or `$none`). A placeholder marked
 //! optional (`${...?}`) drops its rule instead. `Bound::unresolved` reports what
 //! happened to each one (`UnresolvedOutcome`).
+//!
+//! **Warning: an optional placeholder in a `cannot` rule fails open.** When its
+//! value is missing, the whole rule is dropped, and for a `cannot` rule
+//! (`"inverted": true`) that removes the deny: with no `user.blocked_author`,
+//! `cannot read Post when author_id == ${user.blocked_author?}` denies nothing.
+//! That is right only when the value may legitimately be absent, as here: a user
+//! who blocked no author has nothing to deny. The real risk is a value that is
+//! missing by mistake: a mistyped placeholder path (`Templates::compile` checks
+//! only its root) or a context that was not fully populated drops the deny just
+//! the same. So list the optional denies you expect, and treat any other
+//! `UnresolvedOutcome::RuleDropped` report with `inverted` set as
+//! security-relevant: log or alert on it, or fail the request, as the example
+//! above does.
 //!
 //! As in CASL, `"conditions": null` means the same as leaving `conditions` out (an
 //! unconditional rule), and `"fields": null` the same as leaving `fields` out
@@ -266,6 +291,7 @@
 //! - `chrono`: `chrono::DateTime<Utc>` and `NaiveDate` as field types.
 //!
 //! The minimum supported Rust version is 1.94.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 

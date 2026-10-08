@@ -1,0 +1,6 @@
+error: only one variant may be marked `#[subject(all)]`
+ --> tests/ui/fail/subject_two_all.rs:5:5
+  |
+5 | /     #[subject(all)]
+6 | |     Everything,
+  | |______________^

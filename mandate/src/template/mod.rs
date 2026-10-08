@@ -20,13 +20,31 @@ use serde::{Deserialize, Serialize};
 /// Deserialize templates with `serde_json::from_str` from `json` or `text`
 /// storage: the condition document rejects duplicate keys and keeps key
 /// order. Passing through `serde_json::Value` or a Postgres `jsonb` column
-/// first loses both (see the crate docs, "Storing templates").
+/// first loses both (see the crate docs, "Storing templates"). To build one
+/// in code, use [`new`](Self::new) and the `with_*` methods.
 ///
 /// As in CASL, `"conditions": null` means the same as no `conditions` (an
 /// unconditional rule), and `"fields": null` the same as no `fields` (every
 /// field). An empty `fields` list is an error.
+///
+/// # Optional placeholders in `cannot` rules
+///
+/// **An optional placeholder (`${…?}`) in an inverted rule fails open.**
+/// When its value is missing, [`Templates::bind`] drops the whole rule, so
+/// the deny no longer applies and the request gets whatever the other rules
+/// grant. That is right only when the value may legitimately be absent, as
+/// in "deny posts by the blocked author, if any": a user who blocked no one
+/// has nothing to deny. The real risk is a value that is missing by mistake:
+/// a mistyped placeholder path ([`Templates::compile`] checks only its
+/// root) or a context that was not fully populated drops the deny just the
+/// same. So keep a list of the optional denies you expect, and treat any
+/// other
+/// [`UnresolvedOutcome::RuleDropped`](crate::UnresolvedOutcome::RuleDropped)
+/// report with [`inverted`](crate::Unresolved::inverted) set as
+/// security-relevant: log or alert on it, or fail the request.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct RuleTemplate {
     /// Action name or names the rule applies to.
     pub action: OneOrMany,
@@ -47,6 +65,78 @@ pub struct RuleTemplate {
     pub reason: Option<String>,
 }
 
+impl RuleTemplate {
+    /// An unconditional `can` template for `action` on `subject`, covering
+    /// every field and without a reason; the `with_*` methods set the rest.
+    ///
+    /// `action` and `subject` each take one name (`&str` or `String`) or
+    /// several (an array or `Vec` of either).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mandate::{RuleTemplate, TemplateValue};
+    ///
+    /// let conditions: TemplateValue =
+    ///     serde_json::from_str(r#"{"author_id": "${user.id}"}"#).unwrap();
+    /// let built = RuleTemplate::new("update", "Post")
+    ///     .with_conditions(conditions)
+    ///     .with_fields(["title", "body"])
+    ///     .with_reason("Authors edit their own posts");
+    ///
+    /// let stored: RuleTemplate = serde_json::from_str(
+    ///     r#"{"action": "update", "subject": "Post",
+    ///         "conditions": {"author_id": "${user.id}"},
+    ///         "fields": ["title", "body"],
+    ///         "reason": "Authors edit their own posts"}"#,
+    /// )
+    /// .unwrap();
+    /// assert_eq!(built, stored);
+    ///
+    /// // A `cannot` rule for several actions.
+    /// let deny = RuleTemplate::new(["update", "delete"], "Post").with_inverted(true);
+    /// assert!(deny.inverted);
+    /// ```
+    pub fn new(action: impl Into<OneOrMany>, subject: impl Into<OneOrMany>) -> Self {
+        Self {
+            action: action.into(),
+            subject: subject.into(),
+            conditions: None,
+            fields: None,
+            inverted: false,
+            reason: None,
+        }
+    }
+
+    /// Sets the condition document, which may contain placeholders.
+    pub fn with_conditions(mut self, conditions: TemplateValue) -> Self {
+        self.conditions = Some(conditions);
+        self
+    }
+
+    /// Restricts the rule to these fields, by schema name. An empty list is
+    /// rejected by [`Templates::compile`].
+    pub fn with_fields(mut self, fields: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.fields = Some(fields.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Sets whether the rule is a prohibition (a `cannot` rule).
+    ///
+    /// An unresolved optional placeholder (`${…?}`) drops an inverted rule,
+    /// and with it the deny; see [`RuleTemplate`].
+    pub fn with_inverted(mut self, inverted: bool) -> Self {
+        self.inverted = inverted;
+        self
+    }
+
+    /// Sets the human-readable reason.
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
+        self.reason = Some(reason.into());
+        self
+    }
+}
+
 /// A single string or a list of strings.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -55,6 +145,30 @@ pub enum OneOrMany {
     One(String),
     /// Several names.
     Many(Vec<String>),
+}
+
+impl From<&str> for OneOrMany {
+    fn from(name: &str) -> Self {
+        Self::One(name.to_owned())
+    }
+}
+
+impl From<String> for OneOrMany {
+    fn from(name: String) -> Self {
+        Self::One(name)
+    }
+}
+
+impl<T: Into<String>> From<Vec<T>> for OneOrMany {
+    fn from(names: Vec<T>) -> Self {
+        Self::Many(names.into_iter().map(Into::into).collect())
+    }
+}
+
+impl<T: Into<String>, const N: usize> From<[T; N]> for OneOrMany {
+    fn from(names: [T; N]) -> Self {
+        Self::Many(names.into_iter().map(Into::into).collect())
+    }
 }
 
 /// A JSON-like value that preserves object key order and rejects duplicate keys.

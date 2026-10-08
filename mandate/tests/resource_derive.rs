@@ -1,5 +1,7 @@
 #![cfg(all(feature = "derive", feature = "chrono", feature = "uuid"))]
 mod common;
+use chrono::NaiveDate;
+use common::assert_matches;
 use common::fixture::*;
 // `DynResource::resource_schema` avoids clashing with `Resource::schema`.
 // `Post::schema()` is unambiguous even with `use mandate::*` (see `glob_import_schema`).
@@ -46,7 +48,9 @@ fn post_schema_shape() {
             "org",
             "reviewer",
             "tags",
-            "metadata"
+            "metadata",
+            "owner",
+            "due"
         ]
     );
     let f = s.fields();
@@ -73,7 +77,9 @@ fn post_schema_shape() {
     );
     let (tag, card, _) = relation(&f[11]);
     assert_eq!((tag.name(), card), ("Tag", CardinalityKind::ToMany));
-    assert!(matches!(f[12].kind(), FieldKind::Opaque));
+    assert_matches!(f[12].kind(), FieldKind::Opaque);
+    assert_eq!(scalar(&f[13]), (Kind::Uuid, false));
+    assert_eq!(scalar(&f[14]), (Kind::Date, true));
 
     assert_eq!(scalar(&Tag::schema().fields()[1]), (Kind::String, true));
 }
@@ -89,15 +95,21 @@ fn consts_match_indices() {
     assert_eq!(Post::REVIEWER.idx(), FieldIdx(10));
     assert_eq!(Post::TAGS.idx(), FieldIdx(11));
     assert_eq!(Post::METADATA.idx(), FieldIdx(12));
+    assert_eq!(Post::OWNER.idx(), FieldIdx(13));
+    assert_eq!(Post::DUE.idx(), FieldIdx(14));
     assert_eq!(TPost::ID.idx(), FieldIdx(0));
     assert_eq!(TPost::SCORE.idx(), FieldIdx(5));
     assert_eq!(TPost::ORG.idx(), FieldIdx(6));
     assert_eq!(TPost::REVIEWER.idx(), FieldIdx(7));
     assert_eq!(TPost::TAGS.idx(), FieldIdx(8));
+    assert_eq!(TPost::OWNER.idx(), FieldIdx(9));
+    assert_eq!(TPost::DUE.idx(), FieldIdx(10));
     // The handle types carry the declared field type.
     let _: mandate::Field<Post, Option<i64>> = Post::REVIEWER_ID;
     let _: mandate::Rel<Post, Option<User>> = Post::REVIEWER;
     let _: mandate::Opaque<Post> = Post::METADATA;
+    let _: mandate::Field<Post, uuid::Uuid> = Post::OWNER;
+    let _: mandate::Field<Post, Option<NaiveDate>> = Post::DUE;
 }
 
 #[test]
@@ -112,6 +124,8 @@ fn dyn_values_and_relations() {
     assert_eq!(d.value(Post::STATUS.idx()), ValueRef::Str("published"));
     assert_eq!(d.value(Post::PUBLISHED_AT.idx()), ValueRef::Null);
     assert_eq!(d.value(Post::SCORE.idx()), ValueRef::Float(1.0));
+    assert_eq!(d.value(Post::OWNER.idx()), ValueRef::Uuid(OWNER));
+    assert_eq!(d.value(Post::DUE.idx()), ValueRef::Null);
     match d.relation(Post::ORG.idx()) {
         RelationRef::One(o) => {
             assert!(std::ptr::eq(o.resource_schema(), Org::schema()));
@@ -125,25 +139,33 @@ fn dyn_values_and_relations() {
     ));
     assert!(matches!(d.relation(Post::TAGS.idx()), RelationRef::Many(m) if m.is_empty()));
 
-    // Non-scalar and out-of-range indices never panic.
+    // Non-scalar and out-of-range indices never panic, and read as not
+    // loaded (never as null or absent, which would fail open).
+    let out_of_range = FieldIdx(Post::schema().fields().len() as u16);
     for idx in [
         Post::ORG.idx(),
         Post::METADATA.idx(),
-        FieldIdx(13),
+        out_of_range,
         FieldIdx(u16::MAX),
     ] {
-        assert_eq!(d.value(idx), ValueRef::Null);
+        assert_eq!(d.value(idx), ValueRef::NotLoaded);
     }
     for idx in [
         Post::TITLE.idx(),
         Post::METADATA.idx(),
-        FieldIdx(13),
+        Post::OWNER.idx(),
+        out_of_range,
         FieldIdx(u16::MAX),
     ] {
-        assert!(matches!(d.relation(idx), RelationRef::Absent));
+        assert!(matches!(d.relation(idx), RelationRef::NotLoaded));
     }
 
     let mut p = post();
+    p.due = NaiveDate::from_ymd_opt(2026, 3, 1);
+    assert_eq!(
+        p.as_dyn().value(Post::DUE.idx()),
+        ValueRef::Date(NaiveDate::from_ymd_opt(2026, 3, 1).unwrap())
+    );
     p.reviewer = Some(User {
         id: 5,
         name: "Ann".into(),
@@ -212,23 +234,33 @@ fn schema_identity_and_cycles() {
 fn load_state_reports_not_loaded() {
     let t = TPost {
         loaded: Loaded(vec!["author_id"]),
-        id: 1,
-        author_id: 7,
-        reviewer_id: None,
         title: "T".into(),
         status: Status::Draft,
         score: 0.5,
         org: Lazy::NotLoaded,
         reviewer: Lazy::Loaded(None),
         tags: Lazy::Loaded(vec![]),
+        ..loaded_tpost()
     };
     let d = t.as_dyn();
     assert_eq!(d.value(FieldIdx(1)), ValueRef::NotLoaded);
     assert_eq!(d.value(FieldIdx(0)), ValueRef::Int(1));
     assert_eq!(d.value(FieldIdx(4)), ValueRef::Str("draft"));
+    assert_eq!(d.value(TPost::OWNER.idx()), ValueRef::Uuid(OWNER));
+    assert_eq!(d.value(TPost::DUE.idx()), ValueRef::Null);
     let s = TPost::schema();
     assert_eq!(s.index_of("loaded"), None);
-    assert_eq!(s.fields().len(), 9);
+    assert_eq!(s.fields().len(), 11);
+    // Uuid and Date scalars report their load state too.
+    let unloaded = TPost {
+        loaded: Loaded(vec!["owner", "due"]),
+        due: NaiveDate::from_ymd_opt(2026, 1, 1),
+        ..loaded_tpost()
+    };
+    let du = unloaded.as_dyn();
+    assert_eq!(du.value(TPost::OWNER.idx()), ValueRef::NotLoaded);
+    assert_eq!(du.value(TPost::DUE.idx()), ValueRef::NotLoaded);
+    assert_eq!(du.value(TPost::ID.idx()), ValueRef::Int(1));
     assert!(matches!(d.relation(FieldIdx(6)), RelationRef::NotLoaded));
     assert!(matches!(d.relation(FieldIdx(7)), RelationRef::Absent));
     assert!(matches!(d.relation(FieldIdx(8)), RelationRef::Many(m) if m.is_empty()));
@@ -269,10 +301,10 @@ fn load_state_reports_not_loaded() {
 fn fieldless_resource() {
     assert!(Marker::schema().fields().is_empty());
     let m = Marker {};
-    assert_eq!(m.as_dyn().value(FieldIdx(0)), ValueRef::Null);
+    assert_eq!(m.as_dyn().value(FieldIdx(0)), ValueRef::NotLoaded);
     assert!(matches!(
         m.as_dyn().relation(FieldIdx(0)),
-        RelationRef::Absent
+        RelationRef::NotLoaded
     ));
 }
 

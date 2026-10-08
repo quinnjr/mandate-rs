@@ -1,6 +1,9 @@
 //! Fetch projections (spec §7.5).
 
+use core::convert::Infallible;
+
 use crate::condition::deps::collect;
+use crate::fieldset::walk_permitted;
 use crate::{
     Ability, Action, EvalError, FieldIdx, FieldKind, FieldMask, FieldSet, Schema, Subject,
     SubjectResource,
@@ -9,6 +12,7 @@ use crate::{
 /// What to fetch so the in-memory checks for an action can run: `R`'s scalar and
 /// opaque fields, plus the relations the rule conditions read.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Projection<R> {
     /// `R`'s scalar and opaque fields to fetch. Relation fields never appear here.
     pub fields: FieldSet<R>,
@@ -27,6 +31,7 @@ impl<R> Clone for Projection<R> {
 
 /// A relation to load only because a condition reads through it.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct RelationProjection {
     /// The relation field on the owning schema.
     pub relation: FieldIdx,
@@ -78,22 +83,22 @@ impl<A: Action, S: Subject> Ability<A, S> {
         Self::guard::<R>()?;
         let schema = R::schema();
         let all = FieldMask::all(schema.fields().len());
-        let mut permitted = FieldMask::default();
+        // The §7.4 walk without an instance, for a superset: every `can`
+        // may add its fields, and a conditional `cannot` removes nothing.
+        let applied = self
+            .cell(action, R::SUBJECT)
+            .iter()
+            .map(|&i| &self.rules()[i as usize])
+            .filter(|r| !r.inverted() || r.condition().is_none())
+            .map(|r| Ok::<_, Infallible>((r.inverted(), r.fields())));
+        let permitted = match walk_permitted(all, applied) {
+            Ok(mask) => mask,
+            Err(e) => match e {},
+        };
         let mut fields = FieldMask::default();
         let mut relations = Vec::new();
         for &i in self.cell(action, R::SUBJECT) {
-            let rule = &self.rules()[i as usize];
-            let listed = rule.fields().unwrap_or(all);
-            match (rule.inverted(), rule.condition()) {
-                (false, _) => permitted = permitted.union(listed),
-                (true, None) => {
-                    for f in listed.iter() {
-                        permitted.remove(f);
-                    }
-                }
-                (true, Some(_)) => {}
-            }
-            if let Some(c) = rule.condition() {
+            if let Some(c) = self.rules()[i as usize].condition() {
                 collect(c, schema, &mut fields, &mut relations);
             }
         }

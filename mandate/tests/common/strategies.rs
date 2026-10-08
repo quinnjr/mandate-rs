@@ -4,6 +4,7 @@
 
 use std::fmt::Debug;
 
+use chrono::NaiveDate;
 use mandate::{
     Ability, AbilityBuilder, Cond, Field, FieldRef, GroupBuilder, Nullable, Ordered, Scalar,
     Textual,
@@ -11,6 +12,7 @@ use mandate::{
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::strategy::Union;
+use uuid::Uuid;
 
 use super::fixture::*;
 
@@ -23,6 +25,17 @@ pub static TITLES: [&str; 5] = ["", "a", "ab", "é", "e\u{301}"];
 pub static TEXTS: [&str; 10] = [
     "", "a", "ab", "é", "e\u{301}", "$", "$a", "$$a", "${a}", "${ctx.v}",
 ];
+
+/// Owners (and owner operands): the fixture's [`OWNER`], the nil UUID, and
+/// the max UUID.
+pub static UUIDS: [Uuid; 3] = [OWNER, Uuid::nil(), Uuid::max()];
+
+/// Due dates (and date operands): a leap day, the day after it, and the
+/// first day of the next year. Instances may also have no due date.
+pub fn dates() -> [NaiveDate; 3] {
+    [(2024, 2, 29), (2024, 3, 1), (2025, 1, 1)]
+        .map(|(y, m, d)| NaiveDate::from_ymd_opt(y, m, d).expect("valid date"))
+}
 
 /// Every action, for properties that check each one.
 pub const ACTIONS: [Action; 5] = [
@@ -43,6 +56,14 @@ pub fn title() -> impl Strategy<Value = String> + Clone {
 
 pub fn text() -> impl Strategy<Value = String> + Clone {
     prop::sample::select(&TEXTS[..]).prop_map(String::from)
+}
+
+pub fn uuid() -> impl Strategy<Value = Uuid> + Clone {
+    prop::sample::select(&UUIDS[..])
+}
+
+pub fn date() -> impl Strategy<Value = NaiveDate> + Clone {
+    prop::sample::select(dates().to_vec())
 }
 
 pub fn status() -> impl Strategy<Value = Status> + Clone {
@@ -168,7 +189,8 @@ pub fn cond_ttag(depth: u32) -> impl Strategy<Value = Cond<TTag>> {
     combine(leaf.boxed(), depth)
 }
 
-/// Conditions on `TPost`: every operator each field type allows, the to-one
+/// Conditions on `TPost`: every operator each field type allows (`Uuid`:
+/// equality and lists; `Date`: those, ordering and null tests), the to-one
 /// relations (`then`, and `is_null`/`is_not_null` on the nullable one), and
 /// the to-many quantifiers, combined up to `depth` levels.
 pub fn cond_tpost(depth: u32) -> impl Strategy<Value = Cond<TPost>> {
@@ -185,6 +207,10 @@ pub fn cond_tpost(depth: u32) -> impl Strategy<Value = Cond<TPost>> {
     scalars.extend(eq_ops(TPost::STATUS, status()));
     scalars.extend(eq_ops(TPost::SCORE, score()));
     scalars.extend(ord_ops(TPost::SCORE, score()));
+    scalars.extend(eq_ops(TPost::OWNER, uuid()));
+    scalars.extend(eq_ops(TPost::DUE, date()));
+    scalars.extend(ord_ops(TPost::DUE, date()));
+    scalars.extend(null_ops(TPost::DUE));
 
     let d = inner_depth(depth);
     let relations: Leaves<TPost> = vec![
@@ -221,7 +247,7 @@ impl RuleSpec {
 }
 
 /// Every `TPost` field, relations included.
-pub fn tpost_fields() -> [FieldRef<TPost>; 9] {
+pub fn tpost_fields() -> [FieldRef<TPost>; 11] {
     [
         TPost::ID.into(),
         TPost::AUTHOR_ID.into(),
@@ -232,6 +258,8 @@ pub fn tpost_fields() -> [FieldRef<TPost>; 9] {
         TPost::ORG.into(),
         TPost::REVIEWER.into(),
         TPost::TAGS.into(),
+        TPost::OWNER.into(),
+        TPost::DUE.into(),
     ]
 }
 
@@ -372,12 +400,22 @@ pub fn ttag(fully_loaded: bool) -> impl Strategy<Value = TTag> {
 }
 
 /// A post with null scalars, absent reviewers, empty and non-empty tag lists
-/// (tags with null names, and with absent or present authors). Unless `fully_loaded`, scalars of the post and of
-/// its related rows may be unloaded and relation slots `NotLoaded`.
+/// (tags with null names, and with absent or present authors), and absent or
+/// present due dates. Unless `fully_loaded`, scalars of the post and of its
+/// related rows may be unloaded and relation slots `NotLoaded`.
 pub fn tpost(fully_loaded: bool) -> impl Strategy<Value = TPost> {
     (
         unloaded(
-            &["id", "author_id", "reviewer_id", "title", "status", "score"],
+            &[
+                "id",
+                "author_id",
+                "reviewer_id",
+                "title",
+                "status",
+                "score",
+                "owner",
+                "due",
+            ],
             fully_loaded,
         ),
         (int(), int(), prop::option::of(int())),
@@ -385,6 +423,7 @@ pub fn tpost(fully_loaded: bool) -> impl Strategy<Value = TPost> {
         lazy(torg(fully_loaded), fully_loaded),
         lazy(prop::option::of(tuser(fully_loaded)), fully_loaded),
         lazy(vec(ttag(fully_loaded), 0..3), fully_loaded),
+        (uuid(), prop::option::of(date())),
     )
         .prop_map(
             |(
@@ -394,6 +433,7 @@ pub fn tpost(fully_loaded: bool) -> impl Strategy<Value = TPost> {
                 org,
                 reviewer,
                 tags,
+                (owner, due),
             )| {
                 TPost {
                     loaded,
@@ -406,6 +446,8 @@ pub fn tpost(fully_loaded: bool) -> impl Strategy<Value = TPost> {
                     org,
                     reviewer,
                     tags,
+                    owner,
+                    due,
                 }
             },
         )

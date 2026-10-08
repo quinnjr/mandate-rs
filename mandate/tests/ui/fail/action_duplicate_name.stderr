@@ -1,0 +1,6 @@
+error: duplicate action name `read`
+ --> tests/ui/fail/action_duplicate_name.rs:4:5
+  |
+4 | /     #[action(rename = "read")]
+5 | |     View,
+  | |________^

@@ -1,0 +1,5 @@
+error: value name `$and` must not start with `$`
+ --> tests/ui/fail/into_value_dollar_name.rs:5:5
+  |
+5 |     #[value(rename = "$and")]
+  |     ^

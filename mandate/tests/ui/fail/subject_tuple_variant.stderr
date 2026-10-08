@@ -1,0 +1,5 @@
+error: `Subject` variants must be unit variants
+ --> tests/ui/fail/subject_tuple_variant.rs:3:5
+  |
+3 |     Post(i32),
+  |     ^^^^^^^^^

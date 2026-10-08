@@ -1,0 +1,11 @@
+error[E0639]: cannot create non-exhaustive struct using struct expression
+  --> tests/ui/fail/unresolved_non_exhaustive.rs:5:13
+   |
+ 5 |       let _ = mandate::Unresolved {
+   |  _____________^
+ 6 | |         rule_index: 0,
+ 7 | |         placeholder: String::new(),
+ 8 | |         outcome: mandate::UnresolvedOutcome::RuleDropped,
+ 9 | |         inverted: false,
+10 | |     };
+   | |_____^

@@ -86,6 +86,28 @@ pub enum ValueRef<'a> {
     Date(NaiveDate),
 }
 
+impl ValueRef<'_> {
+    /// Whether this is a value of a field of kind `kind`.
+    ///
+    /// `Str` matches both [`Kind::String`] and [`Kind::Enum`]; `Null` and
+    /// `NotLoaded` match no kind.
+    pub fn kind_matches(&self, kind: Kind) -> bool {
+        match self {
+            ValueRef::Null | ValueRef::NotLoaded => false,
+            ValueRef::Bool(_) => kind == Kind::Bool,
+            ValueRef::Int(_) => kind == Kind::Int,
+            ValueRef::Float(_) => kind == Kind::Float,
+            ValueRef::Str(_) => matches!(kind, Kind::String | Kind::Enum(_)),
+            #[cfg(feature = "uuid")]
+            ValueRef::Uuid(_) => kind == Kind::Uuid,
+            #[cfg(feature = "chrono")]
+            ValueRef::DateTime(_) => kind == Kind::DateTime,
+            #[cfg(feature = "chrono")]
+            ValueRef::Date(_) => kind == Kind::Date,
+        }
+    }
+}
+
 /// Truncates a timestamp to microsecond precision.
 #[cfg(feature = "chrono")]
 pub fn truncate_micros(dt: DateTime<Utc>) -> DateTime<Utc> {
@@ -110,6 +132,42 @@ mod tests {
         assert!(v.kind_matches(Kind::String));
         assert!(v.kind_matches(Kind::Enum(&["a"])));
         assert!(!v.kind_matches(Kind::Int));
+    }
+
+    #[test]
+    fn value_refs_match_their_kind() {
+        let s = ValueRef::Str("a");
+        assert!(s.kind_matches(Kind::String));
+        assert!(s.kind_matches(Kind::Enum(&["a"])));
+        assert!(!s.kind_matches(Kind::Int));
+        assert!(ValueRef::Bool(true).kind_matches(Kind::Bool));
+        assert!(ValueRef::Int(1).kind_matches(Kind::Int));
+        assert!(!ValueRef::Int(1).kind_matches(Kind::Float));
+        assert!(ValueRef::Float(1.0).kind_matches(Kind::Float));
+        assert!(!ValueRef::Float(1.0).kind_matches(Kind::Int));
+        for kind in [Kind::Bool, Kind::Int, Kind::String, Kind::Enum(&[])] {
+            assert!(!ValueRef::Null.kind_matches(kind), "{kind:?}");
+            assert!(!ValueRef::NotLoaded.kind_matches(kind), "{kind:?}");
+        }
+    }
+
+    #[cfg(feature = "uuid")]
+    #[test]
+    fn uuid_value_refs_match_their_kind() {
+        let u = ValueRef::Uuid(uuid::Uuid::nil());
+        assert!(u.kind_matches(Kind::Uuid));
+        assert!(!u.kind_matches(Kind::String));
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn chrono_value_refs_match_their_kind() {
+        let dt = ValueRef::DateTime(DateTime::<Utc>::UNIX_EPOCH);
+        assert!(dt.kind_matches(Kind::DateTime));
+        assert!(!dt.kind_matches(Kind::Date));
+        let d = ValueRef::Date(NaiveDate::default());
+        assert!(d.kind_matches(Kind::Date));
+        assert!(!d.kind_matches(Kind::DateTime));
     }
 
     #[cfg(feature = "chrono")]

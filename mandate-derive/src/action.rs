@@ -2,34 +2,18 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Error, Fields, Lit};
+use syn::{DeriveInput, Error};
 
-use crate::naming::apply_rename_all;
+use crate::naming::{apply_rename_all, unraw};
+use crate::unit_enum::{Named, check_unit, rename_value, variants};
 
 pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
-    let Data::Enum(data) = &input.data else {
-        return Err(Error::new_spanned(
-            &input.ident,
-            "`Action` can only be derived for enums",
-        ));
-    };
-    if !input.generics.params.is_empty() {
-        return Err(Error::new_spanned(
-            &input.generics,
-            "`Action` does not support generics",
-        ));
-    }
+    let variants = variants(&input, "Action")?;
     let ty = &input.ident;
-    let mut idents = Vec::new();
-    let mut names: Vec<String> = Vec::new();
+    let mut named = Named::new("action");
     let mut manage: Option<&syn::Ident> = None;
-    for v in &data.variants {
-        if !matches!(v.fields, Fields::Unit) {
-            return Err(Error::new_spanned(
-                v,
-                "`Action` variants must be unit variants",
-            ));
-        }
+    for v in variants {
+        check_unit(v, "Action")?;
         let mut rename = None;
         let mut is_manage = false;
         for a in v.attrs.iter().filter(|a| a.path().is_ident("action")) {
@@ -37,12 +21,7 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                 if m.path.is_ident("manage") {
                     is_manage = true;
                 } else if m.path.is_ident("rename") {
-                    match m.value()?.parse::<Lit>()? {
-                        Lit::Str(s) => rename = Some(s.value()),
-                        other => {
-                            return Err(Error::new_spanned(other, "expected a string literal"));
-                        }
-                    }
+                    rename = Some(rename_value(&m)?);
                 } else {
                     return Err(m.error("expected `manage` or `rename = \"...\"`"));
                 }
@@ -60,43 +39,39 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         }
         let name = match rename {
             Some(n) => n,
-            None => apply_rename_all("snake_case", &v.ident.to_string())
+            None => apply_rename_all("snake_case", &unraw(&v.ident))
                 .map_err(|e| Error::new_spanned(v, e))?,
         };
-        if names.contains(&name) {
-            return Err(Error::new_spanned(
-                v,
-                format!("duplicate action name `{name}`"),
-            ));
-        }
-        names.push(name);
-        idents.push(&v.ident);
+        named.push(v, name)?;
     }
-    let count = idents.len();
-    let idx = 0..count;
+    let dense = named.dense_items();
     let manage = match manage {
         Some(m) => quote!(::core::option::Option::Some(Self::#m)),
         None => quote!(::core::option::Option::None),
     };
     Ok(quote! {
         impl ::mandate::Action for #ty {
-            const COUNT: usize = #count;
             const MANAGE: ::core::option::Option<Self> = #manage;
-            fn index(self) -> usize {
-                match self { #(Self::#idents => #idx,)* }
-            }
-            fn name(self) -> &'static str {
-                match self { #(Self::#idents => #names,)* }
-            }
-            fn from_name(name: &str) -> ::core::option::Option<Self> {
-                match name {
-                    #(#names => ::core::option::Option::Some(Self::#idents),)*
-                    _ => ::core::option::Option::None,
-                }
-            }
-            fn all() -> &'static [Self] {
-                &[#(Self::#idents),*]
-            }
+            #dense
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use syn::{DeriveInput, parse_quote};
+
+    #[test]
+    fn raw_identifiers_are_unrawed() {
+        let input: DeriveInput = parse_quote! {
+            enum E { r#match, r#LoopAround, #[action(rename = "r#kept")] r#Other }
+        };
+        let expanded = super::expand(input).unwrap().to_string();
+        // Rule names appear in the expansion as string literals.
+        let names = |name: &str| expanded.contains(&format!("{name:?}"));
+        assert!(names("match") && !names("r#match"));
+        assert!(names("loop_around"));
+        // An explicit rename is taken as written.
+        assert!(names("r#kept"));
+    }
 }

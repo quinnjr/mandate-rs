@@ -31,6 +31,10 @@ impl FieldMask {
     pub fn union(self, other: FieldMask) -> FieldMask {
         FieldMask([self.0[0] | other.0[0], self.0[1] | other.0[1]])
     }
+    /// The fields of `self` that are not in `other`.
+    pub fn difference(self, other: FieldMask) -> FieldMask {
+        FieldMask([self.0[0] & !other.0[0], self.0[1] & !other.0[1]])
+    }
     /// Whether every field in `self` is in `other`.
     pub fn is_subset(&self, other: &FieldMask) -> bool {
         self.0[0] & !other.0[0] == 0 && self.0[1] & !other.0[1] == 0
@@ -58,6 +62,34 @@ impl FieldMask {
         };
         FieldMask([word(0), word(64)])
     }
+}
+
+/// The §7.4 field walk: starting from the empty set, each rule in definition
+/// order adds its fields (a `can`) or removes them (a `cannot`), where `None`
+/// means every field, `all`.
+///
+/// `rules` yields `Ok((inverted, fields))` for exactly the rules that apply,
+/// and the walk stops at the first `Err`, which it returns. The callers pick
+/// the rules: [`Ability::permitted_fields`](crate::Ability::permitted_fields)
+/// the ones whose condition matches an instance (failing on an evaluation
+/// error), [`FieldPlan::permitted`](crate::FieldPlan::permitted) the ones the
+/// database matched, and [`Ability::projection`](crate::Ability::projection)
+/// every rule that may apply to some instance, for a superset.
+pub(crate) fn walk_permitted<E>(
+    all: FieldMask,
+    rules: impl IntoIterator<Item = Result<(bool, Option<FieldMask>), E>>,
+) -> Result<FieldMask, E> {
+    rules
+        .into_iter()
+        .try_fold(FieldMask::default(), |set, rule| {
+            let (inverted, fields) = rule?;
+            let fields = fields.unwrap_or(all);
+            Ok(if inverted {
+                set.difference(fields)
+            } else {
+                set.union(fields)
+            })
+        })
 }
 
 /// A set of fields of resource `R`.

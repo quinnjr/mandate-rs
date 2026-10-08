@@ -133,6 +133,18 @@ impl<A: Action, S: Subject> Templates<A, S> {
     ///
     /// Each one is reported in [`Bound::unresolved`].
     ///
+    /// **An optional placeholder in a `cannot` rule fails open:** dropping
+    /// an inverted rule removes its deny, so the request gets whatever the
+    /// other rules grant. That is right only when the value may legitimately
+    /// be absent ("deny posts by the blocked author, if any"). A mistyped
+    /// placeholder path ([`compile`](Templates::compile) checks only its
+    /// root) or a context that was not fully populated drops the deny just
+    /// the same. So keep a list of the optional denies you expect, and treat
+    /// any other [`UnresolvedOutcome::RuleDropped`] report with
+    /// [`inverted`](Unresolved::inverted) set as security-relevant: log or
+    /// alert on it, or fail the request (the crate docs, "Stored templates",
+    /// show such a check).
+    ///
     /// Fails if a resolved value does not have the kind its field requires,
     /// checked as template literals are at compile time (an enum value must
     /// be a variant name; a list placeholder takes an array without `null`s).
@@ -175,7 +187,11 @@ impl<A: Action, S: Subject> Templates<A, S> {
             let mut dropped = false;
             for id in &rule.optional_slots {
                 if let Resolved::Unresolved = values[id.0] {
-                    unresolved.push(report(&self.slots[id.0], UnresolvedOutcome::RuleDropped));
+                    unresolved.push(report(
+                        &self.slots[id.0],
+                        UnresolvedOutcome::RuleDropped,
+                        rule.inverted,
+                    ));
                     dropped = true;
                 }
             }
@@ -266,8 +282,9 @@ fn mismatch(expected: Kind, v: &Json) -> BindErrorKind {
     BindErrorKind::TypeMismatch { expected, found }
 }
 
-/// The diagnostic for unresolved `slot`.
-fn report(slot: &Slot, outcome: UnresolvedOutcome) -> Unresolved {
+/// The diagnostic for unresolved `slot`, in a rule that is a prohibition
+/// if `inverted`.
+fn report(slot: &Slot, outcome: UnresolvedOutcome, inverted: bool) -> Unresolved {
     let mut placeholder = slot.root.clone();
     for key in &slot.path {
         placeholder.push('.');
@@ -277,6 +294,7 @@ fn report(slot: &Slot, outcome: UnresolvedOutcome) -> Unresolved {
         rule_index: slot.rule_index,
         placeholder,
         outcome,
+        inverted,
     }
 }
 
@@ -346,11 +364,11 @@ impl Binder<'_> {
     fn constant(&mut self, id: SlotId) -> Condition {
         let slot = &self.slots[id.0];
         let (cond, outcome) = if self.can != slot.negative {
-            (Condition::Or(vec![]), UnresolvedOutcome::LeafFalse)
+            (Condition::constant(false), UnresolvedOutcome::LeafFalse)
         } else {
-            (Condition::And(vec![]), UnresolvedOutcome::LeafTrue)
+            (Condition::constant(true), UnresolvedOutcome::LeafTrue)
         };
-        self.unresolved.push(report(slot, outcome));
+        self.unresolved.push(report(slot, outcome, !self.can));
         cond
     }
 

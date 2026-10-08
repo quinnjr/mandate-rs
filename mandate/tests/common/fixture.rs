@@ -2,8 +2,9 @@
 // library's unit tests (`crate::test_fixture`), and by UI cases (`#[path]`).
 // Later tests rely on the field indices noted below.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use mandate::{IntoValue, LoadState, RelationRef, RelationSlot, Resource};
+use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, IntoValue, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -32,6 +33,8 @@ pub struct Post {
     pub tags: Vec<Tag>, // 11  ToMany
     #[resource(opaque)]
     pub metadata: serde_json::Value, // 12
+    pub owner: Uuid,                         // 13
+    pub due: Option<NaiveDate>,              // 14
     #[resource(skip)]
     pub cached_html: String,
 }
@@ -60,8 +63,12 @@ pub struct Tag {
 #[derive(Clone, Debug, Resource)]
 pub struct Marker {}
 
+/// The owner of [`post()`] and [`loaded_tpost()`].
+pub const OWNER: Uuid = Uuid::from_u128(0x67e5_5044_10b1_426f_9247_bb68_0e5f_e0c8);
+
 /// A published post: id 1, author_id 7, reviewer None, title "Hello", body "World", locked false,
-/// published_at None, score 1.0, org Org{id:3,name:"Acme"}, tags [], metadata Null, cached_html "".
+/// published_at None, score 1.0, org Org{id:3,name:"Acme"}, tags [], metadata Null, owner
+/// [`OWNER`], due None, cached_html "".
 pub fn post() -> Post {
     Post {
         id: 1,
@@ -80,6 +87,8 @@ pub fn post() -> Post {
         reviewer: None,
         tags: vec![],
         metadata: serde_json::Value::Null,
+        owner: OWNER,
+        due: None,
         cached_html: String::new(),
     }
 }
@@ -129,6 +138,32 @@ pub struct TPost {
     pub reviewer: Lazy<Option<TUser>>, // 7
     #[resource(relation)]
     pub tags: Lazy<Vec<TTag>>, // 8
+    pub owner: Uuid,              // 9
+    pub due: Option<NaiveDate>,   // 10
+}
+
+/// A fully loaded tracked post mirroring [`post()`]: id 1, author_id 7, reviewer_id None,
+/// title "Hello", status Published, score 1.0, org TOrg{id:3,name:"Acme"}, reviewer None,
+/// tags [], owner [`OWNER`], due None.
+pub fn loaded_tpost() -> TPost {
+    TPost {
+        loaded: Loaded::default(),
+        id: 1,
+        author_id: 7,
+        reviewer_id: None,
+        title: "Hello".into(),
+        status: Status::Published,
+        score: 1.0,
+        org: Lazy::Loaded(TOrg {
+            loaded: Loaded::default(),
+            id: 3,
+            name: "Acme".into(),
+        }),
+        reviewer: Lazy::Loaded(None),
+        tags: Lazy::Loaded(vec![]),
+        owner: OWNER,
+        due: None,
+    }
 }
 
 #[derive(Clone, Debug, Resource)]

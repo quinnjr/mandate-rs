@@ -1,8 +1,9 @@
 #![cfg(all(feature = "derive", feature = "chrono", feature = "uuid"))]
 mod common;
-use chrono::{TimeZone, Utc};
+use chrono::{NaiveDate, TimeZone, Utc};
 use common::fixture::*;
 use mandate::{Ability, Cond, Context, RuleTemplate, Templates};
+use uuid::Uuid;
 
 type Ab = Ability<Action, Subject>;
 
@@ -53,6 +54,7 @@ fn golden_spec_example() {
 #[test]
 fn round_trips_every_node_kind() {
     let dt = Utc.with_ymd_and_hms(2024, 5, 6, 7, 8, 9).unwrap();
+    let day = NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
     let cases: Vec<Cond<Post>> = vec![
         Post::ID.eq(1),
         Post::ID.ne(1),
@@ -70,6 +72,29 @@ fn round_trips_every_node_kind() {
         Post::REVIEWER_ID.is_not_null(),
         Post::PUBLISHED_AT.gt(dt),
         Post::PUBLISHED_AT.is_in([dt]),
+        Post::OWNER.eq(OWNER),
+        Post::OWNER.ne(Uuid::nil()),
+        Post::OWNER.is_in([OWNER, Uuid::nil(), Uuid::max()]),
+        Post::OWNER.not_in([OWNER]),
+        Post::DUE.eq(day),
+        Post::DUE.ne(day),
+        Post::DUE.lt(day),
+        Post::DUE.lte(day),
+        Post::DUE.gt(day),
+        Post::DUE.gte(day),
+        // The extremes `YYYY-MM-DD` can represent.
+        Post::DUE.is_in([
+            day,
+            NaiveDate::from_ymd_opt(0, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(9999, 12, 31).unwrap(),
+        ]),
+        Post::DUE.not_in([day]),
+        Post::DUE.is_null(),
+        Post::DUE.is_not_null(),
+        !Post::DUE.lt(day),
+        Post::OWNER
+            .eq(OWNER)
+            .and(Post::DUE.gte(day).or(Post::DUE.is_null())),
         Post::ORG.then(Org::NAME.eq("Acme")),
         Post::REVIEWER.is_null(),
         Post::REVIEWER.is_not_null(),
@@ -144,4 +169,25 @@ fn value_encodings() {
         json.contains(r#"{"$gt":"2024-05-06T07:08:09.000000Z"}"#),
         "{json}"
     );
+    // UUIDs are hyphenated (lowercase), dates `YYYY-MM-DD` (§6.2).
+    let json = round_trip(&one(Post::OWNER.eq(OWNER)));
+    assert!(
+        json.contains(r#"{"owner":"67e55044-10b1-426f-9247-bb680e5fe0c8"}"#),
+        "{json}"
+    );
+    let json = round_trip(&one(Post::OWNER.is_in([Uuid::nil(), Uuid::max()])));
+    assert!(
+        json.contains(
+            r#"{"$in":["00000000-0000-0000-0000-000000000000","ffffffff-ffff-ffff-ffff-ffffffffffff"]}"#
+        ),
+        "{json}"
+    );
+    let day = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let json = round_trip(&one(Post::DUE.lt(day)));
+    assert!(json.contains(r#"{"due":{"$lt":"2026-01-01"}}"#), "{json}");
+    let early = NaiveDate::from_ymd_opt(999, 3, 4).unwrap();
+    let json = round_trip(&one(Post::DUE.gte(early)));
+    assert!(json.contains(r#"{"due":{"$gte":"0999-03-04"}}"#), "{json}");
+    let json = round_trip(&one(Post::DUE.is_null()));
+    assert!(json.contains(r#"{"due":null}"#), "{json}");
 }

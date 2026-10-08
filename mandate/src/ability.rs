@@ -2,6 +2,7 @@
 
 use crate::condition::eval::eval;
 use crate::condition::fold::Folded;
+use crate::fieldset::walk_permitted;
 use crate::plan::restrict;
 use crate::{
     AbilityBuilder, Access, Action, CheckError, Condition, DynResource, EvalError, FieldIdx,
@@ -153,6 +154,11 @@ impl<A: Action, S: Subject> Ability<A, S> {
     }
 
     /// The rule that decides an instance check (§7.1), if any.
+    ///
+    /// A `field` that `R`'s schema does not have (only a hand-built
+    /// [`FieldRef`] can name one) fails with
+    /// [`EvalError::InvalidCondition`] at path `#<index>`, so the check
+    /// denies.
     fn decide<R: SubjectResource<S>>(
         &self,
         action: A,
@@ -160,6 +166,13 @@ impl<A: Action, S: Subject> Ability<A, S> {
         field: Option<FieldIdx>,
     ) -> Result<Option<&Rule<A, S>>, EvalError> {
         Self::guard::<R>()?;
+        if let Some(f) = field
+            && R::schema().field(f).is_none()
+        {
+            return Err(EvalError::InvalidCondition {
+                path: format!("#{}", f.0),
+            });
+        }
         let dynr = resource.as_dyn();
         for rule in self.applicable(action, R::SUBJECT, field).rev() {
             let hit = match rule.condition() {
@@ -293,6 +306,10 @@ impl<A: Action, S: Subject> Ability<A, S> {
     }
 
     /// Like [`can_field`](Self::can_field), but explains a denial or an evaluation failure.
+    ///
+    /// A field that `R`'s schema does not have (only a hand-built
+    /// [`FieldRef`] can name one) is [`CheckError::Unresolvable`] with
+    /// [`EvalError::InvalidCondition`] at path `#<index>`.
     pub fn check_field<R: SubjectResource<S>>(
         &self,
         action: A,
@@ -328,7 +345,9 @@ impl<A: Action, S: Subject> Ability<A, S> {
     ///
     /// A fully loaded `r` is in the result exactly when [`can`](Self::can)
     /// allows `action` on it. Fails closed with [`EvalError::SchemaMismatch`]
-    /// unless `R`'s schema is its subject's.
+    /// unless `R`'s schema is its subject's, and with
+    /// [`EvalError::InvalidCondition`] on a condition the plan cannot express
+    /// (unreachable for validated rules).
     ///
     /// # Examples
     ///
@@ -365,7 +384,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
             self.applicable(action, R::SUBJECT, None)
                 .map(|r| (r.inverted(), r.condition())),
         );
-        Ok(match restrict(f, schema) {
+        Ok(match restrict(f, schema)? {
             Folded::True => Access::All,
             Folded::False => Access::Denied,
             Folded::Cond(c) => Access::Filter(Plan::new(c)),
@@ -408,19 +427,23 @@ impl<A: Action, S: Subject> Ability<A, S> {
             .iter()
             .map(|&i| {
                 let rule = &self.rules[i as usize];
-                let cond = match rule.condition().map(|c| restrict(c.clone(), schema)) {
+                let restricted = rule
+                    .condition()
+                    .map(|c| restrict(c.clone(), schema))
+                    .transpose()?;
+                let cond = match restricted {
                     None | Some(Folded::True) => None,
                     Some(Folded::Cond(c)) => Some(Plan::new(c)),
                     // Unreachable for built rules; evaluates to false.
-                    Some(Folded::False) => Some(Plan::new(Condition::Or(vec![]))),
+                    Some(Folded::False) => Some(Plan::new(Condition::constant(false))),
                 };
-                FieldRule {
+                Ok(FieldRule {
                     inverted: rule.inverted(),
                     fields: rule.fields().map(FieldSet::from_mask),
                     cond,
-                }
+                })
             })
-            .collect();
+            .collect::<Result<_, EvalError>>()?;
         Ok(FieldPlan { rules })
     }
 
@@ -461,24 +484,23 @@ impl<A: Action, S: Subject> Ability<A, S> {
         Self::guard::<R>()?;
         let dynr: &dyn DynResource = resource.as_dyn();
         let all = FieldMask::all(R::schema().fields().len());
-        let mut set = FieldMask::default();
-        for &i in self.cell(action, R::SUBJECT) {
-            let rule = &self.rules[i as usize];
-            if let Some(c) = rule.condition()
-                && !eval(c, R::schema(), dynr)?
-            {
-                continue;
-            }
-            let fields = rule.fields().unwrap_or(all);
-            if rule.inverted() {
-                for f in fields.iter() {
-                    set.remove(f);
+        // The rules whose condition matches, in order; the first evaluation
+        // error ends the walk and is returned instead of its result.
+        let matched = self
+            .cell(action, R::SUBJECT)
+            .iter()
+            .map(|&i| &self.rules[i as usize])
+            .filter_map(|rule| {
+                match rule
+                    .condition()
+                    .map_or(Ok(true), |c| eval(c, R::schema(), dynr))
+                {
+                    Ok(true) => Some(Ok((rule.inverted(), rule.fields()))),
+                    Ok(false) => None,
+                    Err(e) => Some(Err(e)),
                 }
-            } else {
-                set = set.union(fields);
-            }
-        }
-        Ok(FieldSet::from_mask(set))
+            });
+        Ok(FieldSet::from_mask(walk_permitted(all, matched)?))
     }
 }
 
@@ -506,7 +528,7 @@ fn formula<'r>(rules: impl IntoIterator<Item = (bool, Option<&'r Condition>)>) -
         }
     }
 
-    let mut f = Condition::Or(vec![]);
+    let mut f = Condition::constant(false);
     let (mut run, mut run_inverted) = (Vec::new(), false);
     for (inverted, c) in rules {
         if inverted != run_inverted {
@@ -517,11 +539,7 @@ fn formula<'r>(rules: impl IntoIterator<Item = (bool, Option<&'r Condition>)>) -
             // `true ∨ f` is true and `¬true ∧ f` is false.
             None => {
                 run.clear();
-                f = if inverted {
-                    Condition::Or(vec![])
-                } else {
-                    Condition::And(vec![])
-                };
+                f = Condition::constant(!inverted);
             }
             Some(c) if inverted => run.push(Condition::Not(Box::new(c.clone()))),
             Some(c) => run.push(c.clone()),
@@ -534,8 +552,8 @@ fn formula<'r>(rules: impl IntoIterator<Item = (bool, Option<&'r Condition>)>) -
 mod tests {
     use super::formula;
     use crate::condition::fold::fold;
-    use crate::test_fixture::{Action, Post, Subject};
-    use crate::{Ability, Condition, Resource};
+    use crate::test_fixture::{Action, Org, Post, Subject, post};
+    use crate::{Ability, CheckError, Condition, EvalError, Quant, Resource, Rule};
 
     #[test]
     fn index_expands_wildcards() {
@@ -554,9 +572,9 @@ mod tests {
 
     /// The §7.6 formula as written: one nesting level per rule.
     fn nested(rules: &[R]) -> Condition {
-        let mut f = Condition::Or(vec![]);
+        let mut f = Condition::constant(false);
         for (inverted, c) in rules {
-            let c = c.clone().unwrap_or(Condition::And(vec![]));
+            let c = c.clone().unwrap_or(Condition::constant(true));
             f = if *inverted {
                 Condition::And(vec![Condition::Not(Box::new(c)), f])
             } else {
@@ -603,6 +621,40 @@ mod tests {
                 fold(nested(&seq), Post::schema()),
                 "{seq:?}"
             );
+        }
+    }
+
+    #[test]
+    fn plans_fail_on_a_quantifier_over_a_non_relation_like_checks() {
+        // `build()` rejects such a rule, so it is put in directly: a
+        // quantifier over `org.name`, which is a scalar.
+        let invalid = Condition::Rel {
+            relation: Post::ORG.idx(),
+            quant: Quant::One,
+            cond: Some(Box::new(Condition::Rel {
+                relation: Org::NAME.idx(),
+                quant: Quant::Some,
+                cond: None,
+            })),
+        };
+        let err = EvalError::InvalidCondition {
+            path: "org.name".into(),
+        };
+        let rule =
+            |inverted, cond| Rule::new(Action::Read, Subject::Post, inverted, cond, None, None);
+        // As a `can`, and as a `cannot` after an unconditional `can`, so the
+        // plan rewrites it in either polarity.
+        for rules in [
+            vec![rule(false, Some(invalid.clone()))],
+            vec![rule(false, None), rule(true, Some(invalid.clone()))],
+        ] {
+            let a = Ability::<Action, Subject>::from_rules(rules);
+            assert_eq!(
+                a.check(Action::Read, &post()),
+                Err(CheckError::Unresolvable(err.clone()))
+            );
+            assert_eq!(a.access::<Post>(Action::Read), Err(err.clone()));
+            assert_eq!(a.field_plan::<Post>(Action::Read).err(), Some(err.clone()));
         }
     }
 }

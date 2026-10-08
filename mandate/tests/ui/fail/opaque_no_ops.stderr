@@ -1,0 +1,5 @@
+error[E0599]: no method named `is_null` found for struct `mandate::Opaque<R>` in the current scope
+ --> tests/ui/fail/opaque_no_ops.rs:7:28
+  |
+7 |     let _ = Post::METADATA.is_null();
+  |                            ^^^^^^^ method not found in `mandate::Opaque<fixture::Post>`

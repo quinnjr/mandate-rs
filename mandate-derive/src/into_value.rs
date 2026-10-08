@@ -4,7 +4,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Attribute, Data, DeriveInput, Error, Expr, Fields, Lit, Token, spanned::Spanned};
 
-use crate::naming::apply_rename_all;
+use crate::naming::{apply_rename_all, unraw};
 
 /// Reads a string literal from `= "lit"` or `(serialize = "lit", ...)`.
 fn string_arg(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<Option<String>> {
@@ -107,8 +107,7 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             ));
         }
         let at = read_attrs(&v.attrs)?;
-        let raw = v.ident.to_string();
-        let raw = raw.strip_prefix("r#").unwrap_or(&raw).to_owned();
+        let raw = unraw(&v.ident);
         let name = if let Some(n) = at.value_rename.or(at.serde_rename) {
             n
         } else if let Some(rule) = rule {

@@ -1,26 +1,14 @@
 #![cfg(all(feature = "derive", feature = "chrono", feature = "uuid"))]
 mod common;
+use common::assert_matches;
 use common::fixture::*;
-use mandate::{Kind, LoadError, LoadErrorKind, RuleTemplate, Templates};
+use common::spec::SPEC_EXAMPLE;
+use common::templates::{
+    assert_invalid, assert_load_err, assert_mismatch, assert_not_allowed, cond, not_date_time,
+};
+use mandate::{Context, Kind, LoadError, LoadErrorKind, RuleTemplate, Templates};
 
 type T = Templates<Action, Subject>;
-
-const SPEC_EXAMPLE: &str = r#"{
-  "action": "update",
-  "subject": "Post",
-  "conditions": {
-    "author_id": "${user.id}",
-    "status": { "$ne": "archived" },
-    "published_at": null,
-    "org": { "id": "${user.org_id}" },
-    "reviewer": { "$isNull": false },
-    "tags": { "$some": { "name": "rust" } },
-    "$or": [ { "status": "published" }, { "author_id": "${user.id}" } ]
-  },
-  "fields": ["title", "body"],
-  "inverted": false,
-  "reason": "Authors edit their own posts"
-}"#;
 
 fn rule(json: &str) -> RuleTemplate {
     serde_json::from_str(json).unwrap()
@@ -30,29 +18,8 @@ fn compile(json: &str) -> Result<T, LoadError> {
     T::compile(&[rule(json)], &["user"])
 }
 
-/// Compiles `can read Post when <c>`.
-fn cond(c: &str) -> Result<T, LoadError> {
-    compile(&format!(
-        r#"{{"action":"read","subject":"Post","conditions":{c}}}"#
-    ))
-}
-
 fn err(c: &str) -> LoadErrorKind {
     cond(c).unwrap_err().kind
-}
-
-fn mismatch(expected: Kind, found: &str) -> LoadErrorKind {
-    LoadErrorKind::TypeMismatch {
-        expected,
-        found: found.into(),
-    }
-}
-
-fn not_allowed(op: &str, kind: Kind) -> LoadErrorKind {
-    LoadErrorKind::OperatorNotAllowed {
-        op: op.into(),
-        kind,
-    }
 }
 
 #[test]
@@ -106,48 +73,74 @@ fn load_error_kinds() {
         UnknownVariant("Publshed".into())
     );
 
-    assert_eq!(
-        err(r#"{"author_id":"seven"}"#),
-        mismatch(Kind::Int, "\"seven\"")
-    );
-    assert_eq!(err(r#"{"locked":1}"#), mismatch(Kind::Bool, "1"));
-    assert_eq!(err(r#"{"title":true}"#), mismatch(Kind::String, "true"));
-    assert_eq!(err(r#"{"author_id":[1]}"#), mismatch(Kind::Int, "array"));
-    assert_eq!(
-        err(r#"{"title":{"$contains":5}}"#),
-        mismatch(Kind::String, "5")
-    );
-    assert_eq!(
-        err(r#"{"reviewer":{"$isNull":"yes"}}"#),
-        mismatch(Kind::Bool, "\"yes\"")
-    );
+    for (c, path, expected, found) in [
+        (
+            r#"{"author_id":"seven"}"#,
+            "conditions.author_id",
+            Kind::Int,
+            "\"seven\"",
+        ),
+        (r#"{"locked":1}"#, "conditions.locked", Kind::Bool, "1"),
+        (
+            r#"{"title":true}"#,
+            "conditions.title",
+            Kind::String,
+            "true",
+        ),
+        (
+            r#"{"author_id":[1]}"#,
+            "conditions.author_id",
+            Kind::Int,
+            "array",
+        ),
+        (
+            r#"{"title":{"$contains":5}}"#,
+            "conditions.title.$contains",
+            Kind::String,
+            "5",
+        ),
+        (
+            r#"{"reviewer":{"$isNull":"yes"}}"#,
+            "conditions.reviewer.$isNull",
+            Kind::Bool,
+            "\"yes\"",
+        ),
+    ] {
+        assert_mismatch(c, path, expected, found);
+    }
 
-    assert_eq!(
-        err(r#"{"title":{"$lt":"a"}}"#),
-        not_allowed("$lt", Kind::String)
+    assert_not_allowed(
+        r#"{"title":{"$lt":"a"}}"#,
+        "conditions.title.$lt",
+        "$lt",
+        Kind::String,
     );
-    assert_eq!(
-        err(r#"{"author_id":{"$contains":"1"}}"#),
-        not_allowed("$contains", Kind::Int)
+    assert_not_allowed(
+        r#"{"author_id":{"$contains":"1"}}"#,
+        "conditions.author_id.$contains",
+        "$contains",
+        Kind::Int,
     );
-    assert_eq!(
-        err(r#"{"locked":{"$gte":true}}"#),
-        not_allowed("$gte", Kind::Bool)
+    assert_not_allowed(
+        r#"{"locked":{"$gte":true}}"#,
+        "conditions.locked.$gte",
+        "$gte",
+        Kind::Bool,
     );
-    assert!(matches!(
+    assert_matches!(
         err(r#"{"status":{"$gt":"draft"}}"#),
         OperatorNotAllowed {
             kind: Kind::Enum(_),
             ..
         }
-    ));
-    assert!(matches!(
+    );
+    assert_matches!(
         err(r#"{"status":{"$startsWith":"d"}}"#),
         OperatorNotAllowed {
             kind: Kind::Enum(_),
             ..
         }
-    ));
+    );
 
     assert_eq!(err(r#"{"author_id":null}"#), NullNotAllowed);
     assert_eq!(err(r#"{"author_id":{"$eq":null}}"#), NullNotAllowed);
@@ -201,30 +194,82 @@ fn load_error_kinds() {
         (UnknownField("title".into()), "fields[0]")
     );
 
-    assert!(matches!(
-        err(r#"{"published_at":"yesterday"}"#),
-        InvalidValue(_)
-    ));
-    assert!(matches!(
-        err(r#"{"published_at":{"$gt":"2024-13-01T00:00:00Z"}}"#),
-        InvalidValue(_)
-    ));
+    // The reason starts with our text and ends with chrono's own message.
+    for (c, path, text) in [
+        (
+            r#"{"published_at":"yesterday"}"#,
+            "conditions.published_at",
+            "yesterday",
+        ),
+        (
+            r#"{"published_at":{"$gt":"2024-13-01T00:00:00Z"}}"#,
+            "conditions.published_at.$gt",
+            "2024-13-01T00:00:00Z",
+        ),
+    ] {
+        assert_invalid(c, path, |r| r.starts_with(&not_date_time(text)));
+    }
 
-    assert!(matches!(err(r#"{"author_id":"${user.id"}"#), Malformed(_)));
-    assert!(matches!(err(r#"{"title":"${}"}"#), Malformed(_)));
-    assert!(matches!(err(r#"{"title":"${user..id}"}"#), Malformed(_)));
-    assert!(matches!(
-        err(r#"{"author_id":{"$in":["${user.a}"]}}"#),
-        Malformed(_)
-    ));
-    assert!(matches!(err(r#"{"author_id":{"$in":5}}"#), Malformed(_)));
-    assert!(matches!(err(r#"{"author_id":{}}"#), Malformed(_)));
-    assert!(matches!(err(r#"{"$and":{}}"#), Malformed(_)));
-    assert!(matches!(err(r#"{"$not":[]}"#), Malformed(_)));
-    assert!(matches!(err(r#"{"org":5}"#), Malformed(_)));
-    assert!(matches!(err(r#"{"tags":{}}"#), Malformed(_)));
-    // Opaque fields expose no operators.
-    assert!(matches!(err(r#"{"metadata":{}}"#), Malformed(_)));
+    for (c, path, reason) in [
+        (
+            r#"{"author_id":"${user.id"}"#,
+            "conditions.author_id",
+            "invalid placeholder `${user.id`",
+        ),
+        (
+            r#"{"title":"${}"}"#,
+            "conditions.title",
+            "invalid placeholder `${}`",
+        ),
+        (
+            r#"{"title":"${user..id}"}"#,
+            "conditions.title",
+            "invalid placeholder `${user..id}`",
+        ),
+        (
+            r#"{"author_id":{"$in":["${user.a}"]}}"#,
+            "conditions.author_id.$in[0]",
+            "a list element cannot be a placeholder; use a placeholder for the whole list",
+        ),
+        (
+            r#"{"author_id":{"$in":5}}"#,
+            "conditions.author_id.$in",
+            "expected an array or a placeholder, found 5",
+        ),
+        (
+            r#"{"author_id":{}}"#,
+            "conditions.author_id",
+            "empty operator object",
+        ),
+        (
+            r#"{"$and":{}}"#,
+            "conditions.$and",
+            "`$and` expects an array of conditions",
+        ),
+        (
+            r#"{"$not":[]}"#,
+            "conditions.$not",
+            "expected a condition object, found array",
+        ),
+        (
+            r#"{"org":5}"#,
+            "conditions.org",
+            "a relation expects null or an object, found 5",
+        ),
+        (
+            r#"{"tags":{}}"#,
+            "conditions.tags",
+            "a to-many relation needs `$some`, `$every` or `$none`",
+        ),
+        // Opaque fields expose no operators.
+        (
+            r#"{"metadata":{}}"#,
+            "conditions.metadata",
+            "`metadata` is an opaque field and cannot be used in conditions",
+        ),
+    ] {
+        assert_load_err(c, path, |k| *k == Malformed(reason.into()));
+    }
 
     // Paths are dotted from `conditions`, with array indices.
     let e = cond(r#"{"$or":[{},{"author":1}]}"#).unwrap_err();
@@ -249,6 +294,29 @@ fn load_error_kinds() {
     );
 }
 
+/// `$startsWith` and `$endsWith` compile to the conditions of the typed
+/// builders.
+#[test]
+fn text_operators_compile_like_the_builders() {
+    for (c, want) in [
+        (
+            r#"{"title":{"$startsWith":"He"}}"#,
+            Post::TITLE.starts_with("He"),
+        ),
+        (
+            r#"{"title":{"$endsWith":"lo"}}"#,
+            Post::TITLE.ends_with("lo"),
+        ),
+    ] {
+        let bound = cond(c).unwrap().bind(&Context::empty()).unwrap();
+        assert_eq!(
+            bound.rules()[0].condition(),
+            Some(&want.into_condition()),
+            "{c}"
+        );
+    }
+}
+
 #[test]
 fn int_fields_reject_non_i64_numbers() {
     let int_mismatch = |k: LoadErrorKind| {
@@ -271,7 +339,12 @@ fn int_fields_reject_non_i64_numbers() {
             "{n}"
         );
     }
-    assert_eq!(err(r#"{"author_id":1.5}"#), mismatch(Kind::Int, "1.5"));
+    assert_mismatch(
+        r#"{"author_id":1.5}"#,
+        "conditions.author_id",
+        Kind::Int,
+        "1.5",
+    );
     cond(r#"{"author_id":9223372036854775807}"#).unwrap();
     cond(r#"{"author_id":-9223372036854775808}"#).unwrap();
     // Float fields accept any JSON number.
@@ -382,10 +455,13 @@ fn null_conditions_and_fields_mean_omitted() {
             .kind,
         LoadErrorKind::Empty("fields")
     );
-    assert!(matches!(
-        compile(r#"{"action":"read","subject":"Post","conditions":[]}"#)
-            .unwrap_err()
-            .kind,
-        LoadErrorKind::Malformed(_)
-    ));
+    let e = compile(r#"{"action":"read","subject":"Post","conditions":[]}"#).unwrap_err();
+    assert_eq!(
+        (e.rule_index, e.path.as_str(), e.kind),
+        (
+            0,
+            "conditions",
+            LoadErrorKind::Malformed("expected a condition object, found array".into())
+        )
+    );
 }

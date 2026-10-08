@@ -1,53 +1,11 @@
 #![cfg(all(feature = "derive", feature = "chrono", feature = "uuid"))]
 mod common;
 use common::fixture::*;
-use mandate::{
-    Ability, Access, Condition, DynResource, EvalError, FieldDef, FieldIdx, Kind, Plan, Quant,
-    RelationRef, Resource, Schema, SubjectResource, ValueRef,
-};
+use common::imposter::Imposter;
+use common::shape::plan_shape_error;
+use mandate::{Ability, Access, Condition, EvalError, Plan, Resource};
 
 type Ab = Ability<Action, Subject>;
-
-/// Whether every `Not` in `c` sits directly above a `Str` leaf.
-fn only_str_under_not(c: &Condition) -> bool {
-    match c {
-        Condition::Not(inner) => matches!(**inner, Condition::Str { .. }),
-        Condition::And(cs) | Condition::Or(cs) => cs.iter().all(only_str_under_not),
-        Condition::Rel { cond, .. } => cond.as_deref().is_none_or(only_str_under_not),
-        _ => true,
-    }
-}
-
-/// Whether `c` has no `Every` quantifier.
-fn no_every(c: &Condition) -> bool {
-    match c {
-        Condition::Rel {
-            quant: Quant::Every,
-            ..
-        } => false,
-        Condition::Rel { cond, .. } => cond.as_deref().is_none_or(no_every),
-        Condition::And(cs) | Condition::Or(cs) => cs.iter().all(no_every),
-        Condition::Not(c) => no_every(c),
-        _ => true,
-    }
-}
-
-/// Whether `c`'s groups are flattened, deduplicated, and free of constants.
-fn canonical(c: &Condition) -> bool {
-    let group = |cs: &[Condition], same: fn(&Condition) -> bool| {
-        cs.len() >= 2
-            && !cs.iter().any(same)
-            && cs.iter().enumerate().all(|(i, c)| !cs[..i].contains(c))
-            && cs.iter().all(canonical)
-    };
-    match c {
-        Condition::And(cs) => group(cs, |c| matches!(c, Condition::And(_))),
-        Condition::Or(cs) => group(cs, |c| matches!(c, Condition::Or(_))),
-        Condition::Not(c) => canonical(c),
-        Condition::Rel { cond, .. } => cond.as_deref().is_none_or(canonical),
-        _ => true,
-    }
-}
 
 fn access(a: &Ab) -> Access<Post> {
     a.access::<Post>(Action::Read).unwrap()
@@ -194,7 +152,8 @@ fn tag(id: i64, name: Option<&str>) -> Tag {
 fn every_over_nullable_names() {
     let a = every_ability();
     let plan = plan(&a);
-    assert!(no_every(plan.condition()));
+    let c = plan.condition();
+    assert_eq!(plan_shape_error(c), None, "{c:?}");
     let p = Post {
         tags: vec![tag(1, None)],
         ..post()
@@ -324,28 +283,6 @@ fn mixed_rules_agree_with_can() {
 }
 
 #[test]
-fn many_rules_on_a_small_stack() {
-    // One `can` rule per shared record: the formula must not nest per rule.
-    // 2 MiB is a Tokio worker's default stack.
-    std::thread::Builder::new()
-        .stack_size(2 * 1024 * 1024)
-        .spawn(|| {
-            let mut g = Ab::builder()
-                .can(Action::Read, Subject::Post)
-                .when(Post::ID.eq(0));
-            for i in 1..10_000 {
-                g = g.can(Action::Read, Subject::Post).when(Post::ID.eq(i));
-            }
-            let a = g.build().unwrap();
-            let posts = [0, 9_999, 10_000].map(|id| Post { id, ..post() });
-            assert_agrees(&a, &posts);
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
-#[test]
 fn plan_shape_invariants() {
     for a in [
         formula_ability(),
@@ -355,9 +292,7 @@ fn plan_shape_invariants() {
     ] {
         let plan = plan(&a);
         let c = plan.condition();
-        assert!(only_str_under_not(c), "{c:?}");
-        assert!(no_every(c), "{c:?}");
-        assert!(canonical(c), "{c:?}");
+        assert_eq!(plan_shape_error(c), None, "{c:?}");
     }
 }
 
@@ -371,42 +306,22 @@ fn plan_exposes_schema_and_serializes_its_condition() {
     );
 }
 
-struct Imposter;
-static IMPOSTER: Schema = Schema::new("Imposter", &[FieldDef::scalar("id", Kind::Int, false)]);
-impl Resource for Imposter {
-    fn schema() -> &'static Schema {
-        &IMPOSTER
-    }
-    fn as_dyn(&self) -> &dyn DynResource {
-        self
-    }
-}
-impl DynResource for Imposter {
-    fn resource_schema(&self) -> &'static Schema {
-        &IMPOSTER
-    }
-    fn value(&self, _: FieldIdx) -> ValueRef<'_> {
-        ValueRef::NotLoaded
-    }
-    fn relation(&self, _: FieldIdx) -> RelationRef<'_> {
-        RelationRef::NotLoaded
-    }
-}
-impl SubjectResource<Subject> for Imposter {
-    const SUBJECT: Subject = Subject::Post;
-}
-
 #[test]
 fn access_guard() {
     let a = Ab::builder()
         .can(Action::Manage, Subject::All)
         .build()
         .unwrap();
-    assert_eq!(
-        a.access::<Imposter>(Action::Read).unwrap_err(),
-        EvalError::SchemaMismatch {
-            expected: "Post",
-            found: "Imposter",
-        }
+    let e = a.access::<Imposter>(Action::Read).unwrap_err();
+    assert!(
+        matches!(
+            e,
+            EvalError::SchemaMismatch {
+                expected: "Post",
+                found: "Imposter",
+                ..
+            }
+        ),
+        "{e:?}"
     );
 }

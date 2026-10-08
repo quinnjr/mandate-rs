@@ -119,7 +119,9 @@ Bound rules are mixed with code-defined rules through `AbilityBuilder::extend`,
 and `build()` folds everything. Bound rules are never written back as templates.
 
 ```rust
-use mandate::{Ability, Action, Context, Resource, RuleTemplate, Subject, Templates};
+use mandate::{
+    Ability, Action, Context, Resource, RuleTemplate, Subject, Templates, UnresolvedOutcome,
+};
 
 #[derive(Clone, Debug, Resource)]
 struct Post { id: i64, author_id: i64 }
@@ -145,8 +147,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // per request
     let ctx = Context::new().with("user", &serde_json::json!({ "id": 7 }))?;
     let bound = templates.bind(&ctx)?;
-    for unresolved in bound.unresolved() {
-        eprintln!("unresolved placeholder: {unresolved:?}");
+    // The `cannot` rules whose optional placeholder may legitimately be absent.
+    const OPTIONAL_DENIES: &[&str] = &["user.blocked_author"];
+    for u in bound.unresolved() {
+        // Any other dropped `cannot` rule no longer denies anything: fail
+        // the request (or at least log and alert) rather than grant more.
+        if u.outcome == UnresolvedOutcome::RuleDropped
+            && u.inverted
+            && !OPTIONAL_DENIES.contains(&u.placeholder.as_str())
+        {
+            return Err(format!("deny rule dropped: {u:?}").into());
+        }
+        eprintln!("unresolved placeholder: {u:?}");
     }
     let ability = Ability::builder()
         .extend(bound)
@@ -165,6 +177,19 @@ interpretation: a leaf of a `can` rule becomes `false` and a leaf of a `cannot`
 rule becomes `true` (unless negated by `$not` or `$none`). A placeholder marked
 optional (`${...?}`) drops its rule instead. `Bound::unresolved` reports what
 happened to each one (`UnresolvedOutcome`).
+
+**Warning: an optional placeholder in a `cannot` rule fails open.** When its
+value is missing, the whole rule is dropped, and for a `cannot` rule
+(`"inverted": true`) that removes the deny: with no `user.blocked_author`,
+`cannot read Post when author_id == ${user.blocked_author?}` denies nothing.
+That is right only when the value may legitimately be absent, as here: a user
+who blocked no author has nothing to deny. The real risk is a value that is
+missing by mistake: a mistyped placeholder path (`Templates::compile` checks
+only its root) or a context that was not fully populated drops the deny just
+the same. So list the optional denies you expect, and treat any other
+`UnresolvedOutcome::RuleDropped` report with `inverted` set as
+security-relevant: log or alert on it, or fail the request, as the example
+above does.
 
 As in CASL, `"conditions": null` means the same as leaving `conditions` out (an
 unconditional rule), and `"fields": null` the same as leaving `fields` out
@@ -263,6 +288,27 @@ guards for the Armature framework).
 - `chrono`: `chrono::DateTime<Utc>` and `NaiveDate` as field types.
 
 The minimum supported Rust version is 1.94.
+
+## Development
+
+The test suite needs every feature, and runs on any toolchain from the MSRV
+up:
+
+```sh
+cargo test --workspace --all-features
+```
+
+A plain `cargo test` fails on purpose (`mandate/tests/features.rs`): without
+the `chrono` and `uuid` features the other integration tests compile to
+nothing.
+
+The trybuild snapshots (`mandate/tests/ui/fail/*.stderr`) quote compiler
+diagnostics, so the `ui` test runs only on the Rust release that generated
+them (1.99) and is reported as ignored on any other. CI checks them on that
+release with `--include-ignored`. To bump it, change the version in the CI
+`ui` job and in the `rustversion` attribute in `mandate/tests/ui.rs`, run
+`TRYBUILD=overwrite cargo +<version> test -p mandate-rs --all-features --test ui -- --include-ignored`,
+and check that every changed `.stderr` still shows the intended error.
 
 ## License
 

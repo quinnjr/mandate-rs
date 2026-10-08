@@ -1,7 +1,8 @@
 #![cfg(all(feature = "derive", feature = "chrono", feature = "uuid"))]
 mod common;
+use common::assert_matches;
 use common::fixture::*;
-use mandate::{BuildError, Cond, Field, FieldIdx, FieldRef, Rel};
+use mandate::{BuildError, Cond, Field, FieldIdx, FieldRef, Rel, Resource as _};
 
 type Ab = mandate::Ability<Action, Subject>;
 
@@ -102,15 +103,20 @@ fn folding_at_build() {
 #[test]
 fn build_errors() {
     let err = |r: Result<Ab, BuildError>| r.unwrap_err();
-    assert_eq!(
-        err(Ab::builder()
-            .can(Action::Read, Subject::Post)
-            .when(Org::ID.eq(1))
-            .build()),
-        BuildError::SubjectMismatch {
-            subject: "Post",
-            condition_schema: "Org"
-        }
+    let e = err(Ab::builder()
+        .can(Action::Read, Subject::Post)
+        .when(Org::ID.eq(1))
+        .build());
+    assert!(
+        matches!(
+            e,
+            BuildError::SubjectMismatch {
+                subject: "Post",
+                condition_schema: "Org",
+                ..
+            }
+        ),
+        "{e:?}"
     );
     for s in [
         Ab::builder()
@@ -126,45 +132,52 @@ fn build_errors() {
             .when(Post::AUTHOR_ID.eq(1))
             .build(),
     ] {
-        assert!(matches!(err(s), BuildError::ConditionsNotAllowed { .. }));
+        assert_matches!(err(s), BuildError::ConditionsNotAllowed { .. });
     }
-    assert!(matches!(
+    assert_matches!(
         err(Ab::builder()
             .can(Action::Read, Subject::Post)
             .fields([Org::NAME.into()])
             .build()),
         BuildError::ForeignField {
             subject: "Post",
-            field_schema: "Org"
+            field_schema: "Org",
+            ..
         }
-    ));
-    assert_eq!(
+    );
+    assert_matches!(
         err(Ab::builder()
             .can(Vec::<Action>::new(), Subject::Post)
             .build()),
-        BuildError::Empty { what: "actions" }
+        BuildError::Empty {
+            what: "actions",
+            ..
+        }
     );
-    assert_eq!(
+    assert_matches!(
         err(Ab::builder()
             .can(Action::Read, Vec::<Subject>::new())
             .build()),
-        BuildError::Empty { what: "subjects" }
+        BuildError::Empty {
+            what: "subjects",
+            ..
+        }
     );
-    assert_eq!(
+    assert_matches!(
         err(Ab::builder()
             .can(Action::Read, Subject::Post)
             .fields(Vec::<FieldRef<Post>>::new())
             .build()),
-        BuildError::Empty { what: "fields" }
+        BuildError::Empty { what: "fields", .. }
     );
     for v in [f64::NAN, f64::INFINITY] {
-        assert!(matches!(
+        assert_matches!(
             err(Ab::builder()
                 .can(Action::Read, Subject::Post)
                 .when(Post::SCORE.eq(v))
                 .build()),
             BuildError::InvalidValue { .. }
-        ));
+        );
     }
 }
 
@@ -172,13 +185,13 @@ fn build_errors() {
 fn invalid_parts_are_not_folded_away() {
     // The invalid condition sits next to a constant that would absorb it.
     let c = Post::SCORE.eq(f64::NAN).or(Cond::<Post>::all([]));
-    assert!(matches!(
+    assert_matches!(
         Ab::builder()
             .can(Action::Read, Subject::Post)
             .when(c)
             .build(),
         Err(BuildError::InvalidValue { .. })
-    ));
+    );
 }
 
 /// The path and reason of the `InvalidField` error of `can read Post when c`.
@@ -192,6 +205,7 @@ fn invalid(c: Cond<Post>) -> (String, String) {
             subject: "Post",
             path,
             reason,
+            ..
         }) => (path, reason),
         other => panic!("expected InvalidField, got {other:?}"),
     }
@@ -287,17 +301,24 @@ fn hand_built_handles_are_checked_against_the_schema() {
 
 #[test]
 fn hand_built_field_lists_are_checked_against_the_schema() {
-    assert_eq!(
-        Ab::builder()
-            .can(Action::Read, Subject::Post)
-            .fields([Post::TITLE.into(), FieldRef::new(13)])
-            .build()
-            .unwrap_err(),
-        BuildError::InvalidField {
-            subject: "Post",
-            path: "#13".into(),
-            reason: "`Post` has no field with index 13".into(),
-        }
+    // The first index past `Post`'s fields.
+    let n = Post::schema().fields().len();
+    let e = Ab::builder()
+        .can(Action::Read, Subject::Post)
+        .fields([Post::TITLE.into(), FieldRef::new(n as u16)])
+        .build()
+        .unwrap_err();
+    assert!(
+        matches!(
+            &e,
+            BuildError::InvalidField {
+                subject: "Post",
+                path,
+                reason,
+                ..
+            } if *path == format!("#{n}") && *reason == format!("`Post` has no field with index {n}")
+        ),
+        "{e:?}"
     );
 }
 

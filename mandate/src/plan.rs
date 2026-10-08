@@ -51,11 +51,14 @@ impl<R> Plan<R> {
 }
 
 /// Folds `c`, rewrites it to restricted negation normal form, and folds again.
-pub(crate) fn restrict(c: Condition, schema: &'static Schema) -> Folded {
-    match fold(c, schema) {
-        Folded::Cond(c) => fold(nnf(c, schema), schema),
+///
+/// Fails with [`EvalError::InvalidCondition`] on a condition the plan cannot
+/// express (see `nnf`), so that no [`Plan`] holds one.
+pub(crate) fn restrict(c: Condition, schema: &'static Schema) -> Result<Folded, EvalError> {
+    Ok(match fold(c, schema) {
+        Folded::Cond(c) => fold(nnf(c, schema)?, schema),
         constant => constant,
-    }
+    })
 }
 
 impl<R: Resource> Plan<R> {

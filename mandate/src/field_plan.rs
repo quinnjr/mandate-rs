@@ -2,17 +2,20 @@
 
 use core::fmt;
 
+use crate::fieldset::walk_permitted;
 use crate::{FieldMask, FieldSet, Plan, Resource};
 
 /// The rules covering one action on `R`, in definition order, for adapters
 /// that evaluate rule conditions in the database; see
 /// [`Ability::field_plan`](crate::Ability::field_plan).
+#[non_exhaustive]
 pub struct FieldPlan<R> {
     /// One entry per rule, in definition order.
     pub rules: Vec<FieldRule<R>>,
 }
 
 /// One rule of a [`FieldPlan`].
+#[non_exhaustive]
 pub struct FieldRule<R> {
     /// Whether the rule is a `cannot`.
     pub inverted: bool,
@@ -30,21 +33,17 @@ impl<R: Resource> FieldPlan<R> {
     /// [`Ability::permitted_fields`](crate::Ability::permitted_fields).
     pub fn permitted(&self, matched: impl Fn(usize) -> bool) -> FieldSet<R> {
         let all = FieldMask::all(R::schema().fields().len());
-        let mut set = FieldMask::default();
-        for (i, rule) in self.rules.iter().enumerate() {
-            if rule.cond.is_some() && !matched(i) {
-                continue;
-            }
-            let fields = rule.fields.map_or(all, |f| f.mask());
-            if rule.inverted {
-                for f in fields.iter() {
-                    set.remove(f);
-                }
-            } else {
-                set = set.union(fields);
-            }
+        let applied = self
+            .rules
+            .iter()
+            .enumerate()
+            .filter(|(i, rule)| rule.cond.is_none() || matched(*i))
+            .map(|(_, rule)| (rule.inverted, rule.fields.map(|f| f.mask())))
+            .map(Ok::<_, core::convert::Infallible>);
+        match walk_permitted(all, applied) {
+            Ok(mask) => FieldSet::from_mask(mask),
+            Err(e) => match e {},
         }
-        FieldSet::from_mask(set)
     }
 }
 

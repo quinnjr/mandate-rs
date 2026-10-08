@@ -2,7 +2,14 @@
 //!
 //! Logic is two-valued: null is tested only by `IsNull`/`IsNotNull`, and every
 //! other leaf on a null value has the fixed result of the §5.3 null table.
-//! Unloaded data and schema mismatches fail closed with an [`EvalError`].
+//! An operand of another kind than the instance value reads like null.
+//!
+//! Unloaded data, schema mismatches, and conditions the schema does not
+//! support fail closed with an [`EvalError`]. A scalar leaf (including a
+//! null test on a scalar) on a field that is not a scalar of the schema, and
+//! an instance value whose variant is not that of the field's kind, are
+//! [`EvalError::InvalidCondition`], like a quantifier on a field that is not
+//! a relation.
 
 use core::cmp::Ordering;
 
@@ -51,7 +58,7 @@ fn node(cond: &Condition, schema: &'static Schema, r: &dyn DynResource) -> Resul
                 StrOp::StartsWith => s.starts_with(value.as_str()),
                 StrOp::EndsWith => s.ends_with(value.as_str()),
             },
-            // Null, or a kind mismatch read as null.
+            // Null, or a field that is not text, read as null.
             _ => false,
         },
         Condition::IsNull(field) => is_null(schema, r, *field)?,
@@ -81,15 +88,29 @@ fn node(cond: &Condition, schema: &'static Schema, r: &dyn DynResource) -> Resul
     })
 }
 
-/// Reads a scalar field, failing closed if it is not loaded.
+/// Reads a scalar field: null, or a value of the field's kind.
+///
+/// Fails closed with `NotLoaded` if it is not loaded, and with
+/// `InvalidCondition` if `field` is not a scalar of `schema` (unreachable
+/// after validation) or `r` answers with a value of another kind (a
+/// `DynResource` that breaks its contract).
 fn scalar<'r>(
     schema: &Schema,
     r: &'r dyn DynResource,
     field: FieldIdx,
 ) -> Result<ValueRef<'r>, EvalError> {
+    let Some(FieldKind::Scalar { kind, .. }) = schema.field(field).map(FieldDef::kind) else {
+        return Err(EvalError::InvalidCondition {
+            path: path(schema, field),
+        });
+    };
     match r.value(field) {
         ValueRef::NotLoaded => Err(not_loaded(schema, field)),
-        v => Ok(v),
+        v @ ValueRef::Null => Ok(v),
+        v if v.kind_matches(kind) => Ok(v),
+        _ => Err(EvalError::InvalidCondition {
+            path: path(schema, field),
+        }),
     }
 }
 
@@ -163,8 +184,11 @@ fn related(
     let Some((name, FieldKind::Relation { target, .. })) =
         schema.field(field).map(|def| (def.name(), def.kind()))
     else {
-        // Not a relation (unreachable after validation): read as absent.
-        return Ok(matches!(quant, Quant::Every | Quant::None));
+        // Not a relation (unreachable after validation). Reading it as an
+        // absent relation would make `Every`/`None` hold: fail closed instead.
+        return Err(EvalError::InvalidCondition {
+            path: path(schema, field),
+        });
     };
     let target = target();
     // Whether a row satisfies `cond`; a row the relation fails to yield is
@@ -196,20 +220,30 @@ fn related(
     })
 }
 
-/// The `NotLoaded` error for a field of `schema`.
-fn not_loaded(schema: &Schema, field: FieldIdx) -> EvalError {
-    let path = match schema.field(field) {
+/// The error path of a field of `schema`: its name, or `#<index>` for an
+/// index the schema does not have (unreachable after validation).
+pub(crate) fn path(schema: &Schema, field: FieldIdx) -> String {
+    match schema.field(field) {
         Some(def) => def.name().to_owned(),
-        // Unreachable after validation.
         None => format!("#{}", field.0),
-    };
-    EvalError::NotLoaded { path }
+    }
 }
 
-/// Prefixes a `NotLoaded` path with the relation it was reached through.
-fn within(relation: &str, e: EvalError) -> EvalError {
+/// The `NotLoaded` error for a field of `schema`.
+fn not_loaded(schema: &Schema, field: FieldIdx) -> EvalError {
+    EvalError::NotLoaded {
+        path: path(schema, field),
+    }
+}
+
+/// Prefixes a `NotLoaded` or `InvalidCondition` path with the relation it
+/// was reached through.
+pub(crate) fn within(relation: &str, e: EvalError) -> EvalError {
     match e {
         EvalError::NotLoaded { path } => EvalError::NotLoaded {
+            path: format!("{relation}.{path}"),
+        },
+        EvalError::InvalidCondition { path } => EvalError::InvalidCondition {
             path: format!("{relation}.{path}"),
         },
         e => e,
@@ -251,26 +285,6 @@ mod tests {
         Tag {
             id,
             name: Some(name.into()),
-        }
-    }
-
-    /// A fully loaded tracked post mirroring `post()`.
-    fn tpost() -> TPost {
-        TPost {
-            loaded: Loaded::default(),
-            id: 1,
-            author_id: 7,
-            reviewer_id: None,
-            title: "Hello".into(),
-            status: Status::Published,
-            score: 1.0,
-            org: Lazy::Loaded(TOrg {
-                loaded: Loaded::default(),
-                id: 3,
-                name: "Acme".into(),
-            }),
-            reviewer: Lazy::Loaded(None),
-            tags: Lazy::Loaded(vec![]),
         }
     }
 
@@ -453,7 +467,7 @@ mod tests {
     fn not_loaded_fails_closed() {
         let p = TPost {
             loaded: Loaded(vec!["author_id"]),
-            ..tpost()
+            ..loaded_tpost()
         };
         assert_eq!(ev(TPost::AUTHOR_ID.eq(1), &p), not_loaded("author_id"));
         assert_eq!(ev(TPost::AUTHOR_ID.ne(1), &p), not_loaded("author_id"));
@@ -462,7 +476,7 @@ mod tests {
 
         let p = TPost {
             loaded: Loaded(vec!["reviewer_id", "title"]),
-            ..tpost()
+            ..loaded_tpost()
         };
         assert_eq!(
             ev(TPost::REVIEWER_ID.is_null(), &p),
@@ -480,7 +494,7 @@ mod tests {
 
         let p = TPost {
             tags: Lazy::NotLoaded,
-            ..tpost()
+            ..loaded_tpost()
         };
         assert_eq!(ev(TPost::TAGS.some(TTag::ID.eq(1)), &p), not_loaded("tags"));
         assert_eq!(
@@ -498,7 +512,7 @@ mod tests {
                 id: 3,
                 name: "Acme".into(),
             }),
-            ..tpost()
+            ..loaded_tpost()
         };
         assert_eq!(
             ev(TPost::ORG.then(TOrg::NAME.eq("x")), &p),
@@ -508,7 +522,7 @@ mod tests {
 
         let p = TPost {
             reviewer: Lazy::NotLoaded,
-            ..tpost()
+            ..loaded_tpost()
         };
         assert_eq!(ev(TPost::REVIEWER.is_null(), &p), not_loaded("reviewer"));
         assert_eq!(
@@ -527,7 +541,7 @@ mod tests {
                 name: None,
                 author: Lazy::Loaded(None),
             }]),
-            ..tpost()
+            ..loaded_tpost()
         };
         assert_eq!(
             ev(TPost::TAGS.some(TTag::NAME.eq("rust")), &p),
@@ -540,7 +554,7 @@ mod tests {
     fn and_or_short_circuit() {
         let p = TPost {
             loaded: Loaded(vec!["author_id"]),
-            ..tpost()
+            ..loaded_tpost()
         };
         let unloaded = || TPost::AUTHOR_ID.eq(7);
         let false_leaf = || TPost::ID.eq(2);
@@ -574,7 +588,7 @@ mod tests {
         };
         let with_tags = |tags| TPost {
             tags: Lazy::Loaded(tags),
-            ..tpost()
+            ..loaded_tpost()
         };
         let rust = || TTag::NAME.eq("rust");
 
@@ -664,6 +678,178 @@ mod tests {
                 expected: "Org",
                 found: "Tag"
             })
+        );
+    }
+
+    #[test]
+    fn rel_on_non_relation_is_invalid() {
+        let p = post();
+        let invalid = |path: &str| -> Result<bool, EvalError> {
+            Err(EvalError::InvalidCondition { path: path.into() })
+        };
+        // Every quantifier, including `Every`/`None`, which would hold on an
+        // absent relation.
+        for quant in [Quant::One, Quant::Some, Quant::Every, Quant::None] {
+            let on_title = rel(Post::TITLE.idx(), quant, None);
+            assert_eq!(ev_raw(on_title, &p), invalid("title"), "{quant:?}");
+            let past_end = rel(FieldIdx(500), quant, Some(Post::ID.eq(1).into_condition()));
+            assert_eq!(ev_raw(past_end, &p), invalid("#500"), "{quant:?}");
+        }
+        assert_eq!(
+            ev_raw(
+                Condition::Not(Box::new(rel(Post::TITLE.idx(), Quant::None, None))),
+                &p
+            ),
+            invalid("title")
+        );
+        // Reached through a relation, the path names it.
+        let nested = rel(
+            Post::ORG.idx(),
+            Quant::One,
+            Some(rel(Org::NAME.idx(), Quant::Every, None)),
+        );
+        assert_eq!(ev_raw(nested, &p), invalid("org.name"));
+    }
+
+    #[test]
+    fn scalar_leaf_on_non_scalar_is_invalid() {
+        let p = post();
+        let invalid = |path: &str| -> Result<bool, EvalError> {
+            Err(EvalError::InvalidCondition { path: path.into() })
+        };
+        let cmp = |field| Condition::Cmp {
+            field,
+            op: CmpOp::Eq,
+            value: Value::Int(1),
+        };
+        // Relations (present, absent, to-many), an opaque field, and an index
+        // past the end of the schema.
+        for (field, path) in [
+            (Post::ORG.idx(), "org"),
+            (Post::REVIEWER.idx(), "reviewer"),
+            (Post::TAGS.idx(), "tags"),
+            (Post::METADATA.idx(), "metadata"),
+            (FieldIdx(500), "#500"),
+        ] {
+            assert_eq!(ev_raw(cmp(field), &p), invalid(path));
+            let values = vec![Value::Int(1)];
+            let not_in = Condition::NotIn { field, values };
+            assert_eq!(ev_raw(not_in, &p), invalid(path));
+            let contains = Condition::Str {
+                field,
+                op: StrOp::Contains,
+                value: "x".into(),
+            };
+            assert_eq!(ev_raw(contains, &p), invalid(path));
+        }
+        // Null tests take the same guard on anything but a relation.
+        let metadata = Post::METADATA.idx();
+        assert_eq!(ev_raw(Condition::IsNull(metadata), &p), invalid("metadata"));
+        assert_eq!(
+            ev_raw(Condition::IsNotNull(FieldIdx(500)), &p),
+            invalid("#500")
+        );
+        // Reached through a relation, the path names it.
+        let nested = rel(Post::ORG.idx(), Quant::One, Some(cmp(FieldIdx(500))));
+        assert_eq!(ev_raw(nested, &p), invalid("org.#500"));
+    }
+
+    /// A hand-written `Post` that answers every scalar with the same value,
+    /// whatever the field's kind, and has no relation loaded.
+    struct Fixed(ValueRef<'static>);
+
+    impl DynResource for Fixed {
+        fn resource_schema(&self) -> &'static Schema {
+            Post::schema()
+        }
+        fn value(&self, _: FieldIdx) -> ValueRef<'_> {
+            self.0
+        }
+        fn relation(&self, _: FieldIdx) -> RelationRef<'_> {
+            RelationRef::NotLoaded
+        }
+    }
+
+    #[test]
+    fn value_of_another_kind_is_invalid() {
+        let ev_fixed = |c: Cond<Post>, v| eval(&c.into_condition(), Post::schema(), &Fixed(v));
+        let invalid = |path: &str| -> Result<bool, EvalError> {
+            Err(EvalError::InvalidCondition { path: path.into() })
+        };
+        // An `Int` field.
+        assert_eq!(ev_fixed(Post::AUTHOR_ID.eq(7), ValueRef::Int(7)), Ok(true));
+        assert_eq!(
+            ev_fixed(Post::AUTHOR_ID.eq(7), ValueRef::Str("7")),
+            invalid("author_id")
+        );
+        assert_eq!(
+            ev_fixed(Post::AUTHOR_ID.ne(7), ValueRef::Float(7.0)),
+            invalid("author_id")
+        );
+        assert_eq!(
+            ev_fixed(Post::AUTHOR_ID.not_in([7]), ValueRef::Bool(true)),
+            invalid("author_id")
+        );
+        // Null passes the guard, and null tests take it too.
+        assert_eq!(ev_fixed(Post::REVIEWER_ID.ne(7), ValueRef::Null), Ok(true));
+        assert_eq!(
+            ev_fixed(Post::REVIEWER_ID.is_null(), ValueRef::Null),
+            Ok(true)
+        );
+        assert_eq!(
+            ev_fixed(Post::REVIEWER_ID.is_null(), ValueRef::Int(1)),
+            Ok(false)
+        );
+        assert_eq!(
+            ev_fixed(Post::REVIEWER_ID.is_null(), ValueRef::Str("1")),
+            invalid("reviewer_id")
+        );
+        assert_eq!(
+            ev_fixed(Post::REVIEWER_ID.is_not_null(), ValueRef::Str("1")),
+            invalid("reviewer_id")
+        );
+        // `Str` is the variant of both `String` and `Enum` fields.
+        let published = || ValueRef::Str("published");
+        assert_eq!(
+            ev_fixed(Post::TITLE.contains("lish"), published()),
+            Ok(true)
+        );
+        assert_eq!(
+            ev_fixed(Post::STATUS.eq(Status::Published), published()),
+            Ok(true)
+        );
+        assert_eq!(
+            ev_fixed(Post::TITLE.contains("1"), ValueRef::Int(1)),
+            invalid("title")
+        );
+        assert_eq!(
+            ev_fixed(Post::STATUS.eq(Status::Published), ValueRef::Int(1)),
+            invalid("status")
+        );
+        // The feature-gated kinds.
+        assert_eq!(
+            ev_fixed(Post::OWNER.eq(OWNER), ValueRef::Uuid(OWNER)),
+            Ok(true)
+        );
+        assert_eq!(
+            ev_fixed(Post::OWNER.eq(OWNER), ValueRef::Str("owner")),
+            invalid("owner")
+        );
+        let epoch = DateTime::<Utc>::UNIX_EPOCH;
+        assert_eq!(
+            ev_fixed(Post::PUBLISHED_AT.eq(epoch), ValueRef::DateTime(epoch)),
+            Ok(true)
+        );
+        assert_eq!(
+            ev_fixed(
+                Post::PUBLISHED_AT.is_null(),
+                ValueRef::Date(epoch.date_naive())
+            ),
+            invalid("published_at")
+        );
+        assert_eq!(
+            ev_fixed(Post::DUE.is_null(), ValueRef::DateTime(epoch)),
+            invalid("due")
         );
     }
 

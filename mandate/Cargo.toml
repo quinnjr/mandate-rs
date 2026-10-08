@@ -3,11 +3,13 @@ name = "mandate-rs"
 version = "0.1.0"
 description = "A CASL-style authorization library for Rust: one rule set for instance checks, database filters, and field masks"
 readme = "../README.md"
+documentation = "https://docs.rs/mandate-rs"
 keywords = ["authorization", "permissions", "casl", "acl", "abac"]
 categories = ["authentication", "web-programming"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [lib]
 name = "mandate"
@@ -28,4 +30,9 @@ mandate-derive = { path = "../mandate-derive", version = "=0.1.0", optional = tr
 
 [dev-dependencies]
 proptest = "1"
+rustversion = "1"
 trybuild = "1"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

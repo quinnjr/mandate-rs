@@ -116,7 +116,8 @@ fn rel(
     }) = schema.field(relation).map(|def| def.kind())
     else {
         // Not a relation (unreachable after validation): there is no target
-        // schema to fold the condition against.
+        // schema to fold the condition against. Evaluation and filter plans
+        // reject it with `EvalError::InvalidCondition`.
         return Folded::Cond(Condition::Rel {
             relation,
             quant,
@@ -171,6 +172,7 @@ mod tests {
 
     use super::{Folded, fold};
     use crate::condition::eval::eval;
+    use crate::plan::restrict;
     use crate::test_fixture::*;
     use crate::{CmpOp, Condition, EvalError, FieldIdx, Quant, Resource, Value};
 
@@ -193,12 +195,12 @@ mod tests {
 
     /// The constant true.
     fn t() -> Condition {
-        And(vec![])
+        Condition::constant(true)
     }
 
     /// The constant false.
     fn f() -> Condition {
-        Or(vec![])
+        Condition::constant(false)
     }
 
     /// Distinct non-constant Post leaves.
@@ -584,7 +586,6 @@ mod tests {
             unfolded_presence(),
             canonical(),
             relation_scopes(),
-            non_relations(),
             datetimes(),
         ]
         .concat()
@@ -663,6 +664,26 @@ mod tests {
     #[test]
     fn rel_on_non_relation_is_kept() {
         check(non_relations());
+        // Not in `all_cases`, whose inputs evaluate without error: these
+        // fail with `InvalidCondition`, before folding and after, and a
+        // filter plan of them fails with the same error.
+        let p = post();
+        for (input, _) in non_relations() {
+            let before = eval(&input, Post::schema(), p.as_dyn());
+            let Err(invalid @ EvalError::InvalidCondition { .. }) = before.clone() else {
+                panic!("{input:?}: {before:?}");
+            };
+            let Folded::Cond(once) = fold_post(input.clone()) else {
+                panic!("{input:?} folded to a constant");
+            };
+            assert_eq!(eval(&once, Post::schema(), p.as_dyn()), before);
+            assert_eq!(fold_post(once.clone()), Folded::Cond(once));
+            assert_eq!(
+                restrict(input.clone(), Post::schema()),
+                Err(invalid),
+                "{input:?}"
+            );
+        }
     }
 
     #[test]

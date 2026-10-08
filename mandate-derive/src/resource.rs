@@ -4,6 +4,8 @@ use proc_macro2::{Literal, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use syn::{Attribute, Data, DeriveInput, Error, Fields, Ident, LitStr, Type, spanned::Spanned};
 
+use crate::naming::unraw;
+
 /// Mirrors `mandate::MAX_FIELDS`.
 const MAX_FIELDS: usize = 128;
 
@@ -76,12 +78,6 @@ fn load_state_attr(attrs: &[Attribute]) -> syn::Result<Option<Ident>> {
         })?;
     }
     Ok(out)
-}
-
-/// Strips a raw-identifier prefix.
-fn unraw(ident: &Ident) -> String {
-    let s = ident.to_string();
-    s.strip_prefix("r#").map(str::to_owned).unwrap_or(s)
 }
 
 struct SchemaField<'a> {
@@ -258,13 +254,15 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             fn value(&self, field: ::mandate::FieldIdx) -> ::mandate::ValueRef<'_> {
                 match field.0 {
                     #(#value_arms,)*
-                    _ => ::mandate::ValueRef::Null,
+                    // Not a scalar of this schema: never read as null.
+                    _ => ::mandate::ValueRef::NotLoaded,
                 }
             }
             fn relation(&self, field: ::mandate::FieldIdx) -> ::mandate::RelationRef<'_> {
                 match field.0 {
                     #(#relation_arms,)*
-                    _ => ::mandate::RelationRef::Absent,
+                    // Not a relation of this schema: never read as absent.
+                    _ => ::mandate::RelationRef::NotLoaded,
                 }
             }
         }

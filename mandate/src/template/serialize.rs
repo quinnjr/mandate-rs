@@ -9,9 +9,10 @@ use serde::Serialize;
 use serde::ser::{Error, SerializeMap, Serializer};
 
 use super::TemplateValue;
+use crate::condition::{IN_KEY, IS_NULL_KEY, NIN_KEY};
 use crate::{
-    Action, CardinalityKind, CmpOp, Condition, FieldIdx, FieldKind, Quant, Rule, Schema, StrOp,
-    Subject, Value,
+    Action, CardinalityKind, CmpOp, Condition, FieldIdx, FieldKind, Quant, Rule, Schema, Subject,
+    Value,
 };
 
 type Entries = Vec<(String, TemplateValue)>;
@@ -93,25 +94,25 @@ fn object(c: &Condition, schema: &'static Schema) -> Result<Entries, String> {
             let name = name(schema, *field)?;
             match op {
                 CmpOp::Eq => vec![(name, v)],
-                _ => vec![(name, op_object(cmp_key(*op), v))],
+                _ => vec![(name, op_object(op.template_key(), v))],
             }
         }
         Condition::In { field, values } => {
-            vec![(name(schema, *field)?, op_object("$in", list(values)?))]
+            vec![(name(schema, *field)?, op_object(IN_KEY, list(values)?))]
         }
         Condition::NotIn { field, values } => {
-            vec![(name(schema, *field)?, op_object("$nin", list(values)?))]
+            vec![(name(schema, *field)?, op_object(NIN_KEY, list(values)?))]
         }
         Condition::Str { field, op, value } => {
             let v = value_json(&Value::String(value.clone()))?;
-            vec![(name(schema, *field)?, op_object(str_key(*op), v))]
+            vec![(name(schema, *field)?, op_object(op.template_key(), v))]
         }
         Condition::IsNull(field) => vec![(name(schema, *field)?, TemplateValue::Null)],
         Condition::IsNotNull(field) => {
             let v = if is_relation(schema, *field) {
-                op_object("$isNull", TemplateValue::Bool(false))
+                op_object(IS_NULL_KEY, TemplateValue::Bool(false))
             } else {
-                op_object("$ne", TemplateValue::Null)
+                op_object(CmpOp::Ne.template_key(), TemplateValue::Null)
             };
             vec![(name(schema, *field)?, v)]
         }
@@ -169,25 +170,6 @@ fn is_relation(schema: &Schema, field: FieldIdx) -> bool {
 
 fn op_object(op: &str, v: TemplateValue) -> TemplateValue {
     TemplateValue::Object(vec![(key(op), v)])
-}
-
-fn cmp_key(op: CmpOp) -> &'static str {
-    match op {
-        CmpOp::Eq => "$eq",
-        CmpOp::Ne => "$ne",
-        CmpOp::Lt => "$lt",
-        CmpOp::Lte => "$lte",
-        CmpOp::Gt => "$gt",
-        CmpOp::Gte => "$gte",
-    }
-}
-
-fn str_key(op: StrOp) -> &'static str {
-    match op {
-        StrOp::Contains => "$contains",
-        StrOp::StartsWith => "$startsWith",
-        StrOp::EndsWith => "$endsWith",
-    }
 }
 
 fn list(values: &[Value]) -> Result<TemplateValue, String> {

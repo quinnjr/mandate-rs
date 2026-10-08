@@ -13,6 +13,28 @@ fn mask(ix: &[u16]) -> FieldMask {
     m
 }
 
+/// A [`RelationProjection`] (which is `#[non_exhaustive]`) as plain data,
+/// with the target schema by name.
+#[derive(Debug, PartialEq)]
+struct Dep {
+    relation: FieldIdx,
+    target: &'static str,
+    fields: FieldMask,
+    relations: Vec<Dep>,
+}
+
+/// `r` as [`Dep`]s, recursively.
+fn deps(r: &[RelationProjection]) -> Vec<Dep> {
+    r.iter()
+        .map(|r| Dep {
+            relation: r.relation,
+            target: r.target.name(),
+            fields: r.fields,
+            relations: deps(&r.relations),
+        })
+        .collect()
+}
+
 #[test]
 fn condition_dependencies_are_fetched() {
     let a = Ab::builder()
@@ -38,11 +60,11 @@ fn relation_dependencies_carry_only_read_fields() {
         .unwrap();
     let p = a.projection::<Post>(Action::Read).unwrap();
     assert_eq!(
-        p.relations,
-        vec![RelationProjection {
-            relation: FieldIdx(10),
-            target: User::schema(),
-            fields: mask(&[2]),
+        deps(&p.relations),
+        [Dep {
+            relation: Post::REVIEWER.idx(),
+            target: "User",
+            fields: mask(&[User::EMAIL.idx().0]),
             relations: vec![],
         }]
     );
@@ -55,7 +77,10 @@ fn permitted_relations_are_not_loaded() {
         .build()
         .unwrap();
     let p = a.projection::<Post>(Action::Read).unwrap();
-    assert_eq!(p.fields.mask(), mask(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 12]));
+    assert_eq!(
+        p.fields.mask(),
+        mask(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 13, 14])
+    );
     assert!(p.relations.is_empty());
 }
 
@@ -82,15 +107,15 @@ fn cyclic_paths_terminate() {
         .unwrap();
     let p = a.projection::<Post>(Action::Read).unwrap();
     assert_eq!(
-        p.relations,
-        vec![RelationProjection {
-            relation: FieldIdx(10),
-            target: User::schema(),
-            fields: mask(&[]),
-            relations: vec![RelationProjection {
-                relation: FieldIdx(3),
-                target: Post::schema(),
-                fields: mask(&[5]),
+        deps(&p.relations),
+        [Dep {
+            relation: Post::REVIEWER.idx(),
+            target: "User",
+            fields: FieldMask::default(),
+            relations: vec![Dep {
+                relation: User::POSTS.idx(),
+                target: "Post",
+                fields: mask(&[Post::LOCKED.idx().0]),
                 relations: vec![],
             }],
         }]
@@ -163,12 +188,7 @@ fn projection_suffices_for_checks() {
     assert_eq!(p.relations[0].relation, TPost::TAGS.idx());
     let t = TPost {
         loaded: Loaded(not_loaded),
-        id: 1,
-        author_id: 7,
-        reviewer_id: None,
         title: "t".into(),
-        status: Status::Published,
-        score: 1.0,
         org: Lazy::NotLoaded,
         reviewer: Lazy::NotLoaded,
         tags: Lazy::Loaded(vec![TTag {
@@ -177,6 +197,7 @@ fn projection_suffices_for_checks() {
             name: None,
             author: Lazy::Loaded(None),
         }]),
+        ..loaded_tpost()
     };
     assert!(a.permitted_fields(Action::Read, &t).is_ok());
     assert!(a.can(Action::Read, &t));
@@ -193,11 +214,11 @@ fn relation_null_tests_are_relation_dependencies() {
     let p = a.projection::<Post>(Action::Read).unwrap();
     assert!(!p.fields.contains(Post::REVIEWER));
     assert_eq!(
-        p.relations,
-        vec![RelationProjection {
-            relation: FieldIdx(10),
-            target: User::schema(),
-            fields: mask(&[]),
+        deps(&p.relations),
+        [Dep {
+            relation: Post::REVIEWER.idx(),
+            target: "User",
+            fields: FieldMask::default(),
             relations: vec![],
         }]
     );
@@ -215,17 +236,22 @@ fn relation_null_test_check_runs_on_projection() {
     let p = a.projection::<TPost>(Action::Read).unwrap();
     assert_eq!(p.relations.len(), 1);
     assert_eq!(p.relations[0].relation, TPost::REVIEWER.idx());
+    // Only `title` (the permitted field) is fetched.
     let t = TPost {
-        loaded: Loaded(vec!["id", "author_id", "reviewer_id", "status", "score"]),
-        id: 1,
-        author_id: 7,
-        reviewer_id: None,
+        loaded: Loaded(vec![
+            "id",
+            "author_id",
+            "reviewer_id",
+            "status",
+            "score",
+            "owner",
+            "due",
+        ]),
         title: "t".into(),
-        status: Status::Published,
-        score: 1.0,
         org: Lazy::NotLoaded,
         reviewer: Lazy::Loaded(None),
         tags: Lazy::NotLoaded,
+        ..loaded_tpost()
     };
     assert!(a.permitted_fields(Action::Read, &t).is_ok());
     assert!(!a.can(Action::Read, &t));

@@ -2,7 +2,7 @@
 //! Hand-written `Action`/`Subject` implementations that break the dense
 //! index contract are rejected by `build()`, and never make a check panic.
 
-use mandate::{Ability, Access, BuildError, CheckError, Resource, SubjectResource};
+use mandate::{Ability, Access, BuildError, CheckError, Forbidden, Resource, SubjectResource};
 
 #[derive(Clone, Debug, Resource)]
 struct Doc {
@@ -98,8 +98,13 @@ action!(Shared, count = 2, all = [Read, Write], index = [0, 0, 1]);
 subject!(Sub, count = 1, index = 0);
 subject!(BadSub, count = 1, index = 1);
 
-fn invalid(which: &'static str) -> BuildError {
-    BuildError::InvalidEnum { which }
+/// Asserts that `e` is `InvalidEnum` for `which`.
+#[track_caller]
+fn assert_invalid(e: BuildError, which: &str) {
+    assert!(
+        matches!(&e, BuildError::InvalidEnum { which: w, .. } if *w == which),
+        "{e:?}"
+    );
 }
 
 #[test]
@@ -110,54 +115,54 @@ fn inconsistent_actions_are_rejected() {
             .build()
             .is_ok()
     );
-    assert_eq!(
+    assert_invalid(
         Ability::<ShortAll, Sub>::builder()
             .can(ShortAll::Read, Sub::Doc)
             .build()
             .unwrap_err(),
-        invalid("action")
+        "action",
     );
-    assert_eq!(
+    assert_invalid(
         Ability::<Sparse, Sub>::builder()
             .can(Sparse::Read, Sub::Doc)
             .build()
             .unwrap_err(),
-        invalid("action")
+        "action",
     );
-    assert_eq!(
+    assert_invalid(
         Ability::<Shared, Sub>::builder()
             .can(Shared::Read, Sub::Doc)
             .build()
             .unwrap_err(),
-        invalid("action")
+        "action",
     );
     // Even without rules.
-    assert_eq!(
+    assert_invalid(
         Ability::<Shared, Sub>::builder().build().unwrap_err(),
-        invalid("action")
+        "action",
     );
 }
 
 #[test]
 fn rules_on_unlisted_values_are_rejected() {
-    assert_eq!(
+    assert_invalid(
         Ability::<Act, Sub>::builder()
             .can(Act::Read, Sub::Doc)
             .cannot(Act::Hidden, Sub::Doc)
             .build()
             .unwrap_err(),
-        invalid("action")
+        "action",
     );
 }
 
 #[test]
 fn inconsistent_subjects_are_rejected() {
-    assert_eq!(
+    assert_invalid(
         Ability::<Act, BadSub>::builder()
             .can(Act::Read, BadSub::Doc)
             .build()
             .unwrap_err(),
-        invalid("subject")
+        "subject",
     );
 }
 
@@ -173,11 +178,14 @@ fn unlisted_values_are_denied_without_panicking() {
     assert!(!a.can(Act::Hidden, &doc));
     assert!(!a.can_field(Act::Hidden, &doc, Doc::ID));
     assert!(!a.can_type(Act::Hidden, Sub::Doc));
-    assert!(matches!(
-        a.check(Act::Hidden, &doc),
-        Err(CheckError::Forbidden(_))
-    ));
-    assert!(a.check_type(Act::Hidden, Sub::Doc).is_err());
+    // Denied like any action without rules: no field, no reason.
+    let denied = |f: &Forbidden<Act, Sub>| {
+        f.action == Act::Hidden && f.subject == Sub::Doc && f.field.is_none() && f.reason.is_none()
+    };
+    let e = a.check(Act::Hidden, &doc).unwrap_err();
+    assert!(matches!(&e, CheckError::Forbidden(f) if denied(f)), "{e:?}");
+    let e = a.check_type(Act::Hidden, Sub::Doc).unwrap_err();
+    assert!(denied(&e), "{e:?}");
     assert_eq!(a.access::<Doc>(Act::Hidden), Ok(Access::Denied));
     assert!(
         a.permitted_fields(Act::Hidden, &doc)

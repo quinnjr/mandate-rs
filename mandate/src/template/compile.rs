@@ -37,16 +37,13 @@
 //!   `$`-key such as `$some` is `UnknownOperator`, as in any condition object;
 //!   `UnknownKey` is for to-many relation objects.
 
+use crate::condition::limits::MAX_TEMPLATE_DEPTH;
 use crate::condition::validate::{self, Misuse, Use};
+use crate::condition::{IN_KEY, IS_NULL_KEY, NIN_KEY};
 use crate::{
     Action, CardinalityKind, CmpOp, FieldIdx, FieldKind, FieldMask, Kind, LoadError, LoadErrorKind,
     OneOrMany, Quant, RuleTemplate, Schema, StrOp, Subject, TemplateValue, Value,
 };
-
-/// Deepest allowed nesting of condition objects below `conditions` (which is
-/// level 0). Each `$and`/`$or` element, `$not` operand and relation target or
-/// quantifier operand is one level deeper than its parent.
-const MAX_DEPTH: usize = 32;
 
 /// Stored rule templates, validated against the subjects' schemas.
 ///
@@ -250,7 +247,15 @@ fn compile_rule<A: Action, S: Subject>(
         Some(v) => {
             let schema =
                 schema.ok_or_else(|| err("conditions", LoadErrorKind::ConditionsNotAllowed))?;
-            Some(c.object(v, schema, "conditions", 0, false)?)
+            Some(c.object(
+                v,
+                schema,
+                Pos {
+                    path: "conditions",
+                    depth: 0,
+                    negative: false,
+                },
+            )?)
         }
     };
 
@@ -344,6 +349,83 @@ enum Parsed<'s> {
     Placeholder(Placeholder<'s>),
 }
 
+/// Where a condition object or field value is in a template.
+#[derive(Clone, Copy)]
+struct Pos<'p> {
+    /// Its JSON path, e.g. `conditions.org.id`.
+    path: &'p str,
+    /// The nesting level of its condition object (`conditions` is 0; see
+    /// [`MAX_TEMPLATE_DEPTH`]).
+    depth: usize,
+    /// The polarity of a leaf here: flipped by each enclosing `$not` and
+    /// `$none`.
+    negative: bool,
+}
+
+impl Pos<'_> {
+    /// The same position, at `path`.
+    fn at(self, path: &str) -> Pos<'_> {
+        Pos {
+            path,
+            depth: self.depth,
+            negative: self.negative,
+        }
+    }
+
+    /// A condition object one level deeper, at `path`; `flip` (for `$not`
+    /// and `$none`) flips the polarity.
+    fn nested(self, path: &str, flip: bool) -> Pos<'_> {
+        Pos {
+            path,
+            depth: self.depth + 1,
+            negative: self.negative != flip,
+        }
+    }
+}
+
+/// A scalar field of the schema in scope, as [`Compiler::field`] found it.
+#[derive(Clone, Copy)]
+struct ScalarField {
+    idx: FieldIdx,
+    kind: Kind,
+    nullable: bool,
+}
+
+impl ScalarField {
+    /// The field's definition, for [`validate::check`].
+    fn def(self) -> FieldKind {
+        FieldKind::Scalar {
+            kind: self.kind,
+            nullable: self.nullable,
+        }
+    }
+}
+
+/// A relation field of the schema in scope, as [`Compiler::field`] found it.
+#[derive(Clone, Copy)]
+struct RelationField {
+    idx: FieldIdx,
+    target: fn() -> &'static Schema,
+    cardinality: CardinalityKind,
+    nullable: bool,
+}
+
+impl RelationField {
+    /// The field's definition, for [`validate::check`].
+    fn def(self) -> FieldKind {
+        FieldKind::Relation {
+            target: self.target,
+            cardinality: self.cardinality,
+            nullable: self.nullable,
+        }
+    }
+
+    /// The schema of the relation's target.
+    fn target(self) -> &'static Schema {
+        (self.target)()
+    }
+}
+
 impl Compiler<'_> {
     fn err(&self, path: &str, kind: LoadErrorKind) -> LoadError {
         LoadError {
@@ -376,16 +458,15 @@ impl Compiler<'_> {
     }
 
     /// A condition object over `schema`: field keys and `$and`/`$or`/`$not`,
-    /// AND-ed in key order. `negative` is the polarity of its position.
+    /// AND-ed in key order, at `pos`.
     fn object(
         &mut self,
         v: &TemplateValue,
         schema: &'static Schema,
-        path: &str,
-        depth: usize,
-        negative: bool,
+        pos: Pos<'_>,
     ) -> Result<TCond, LoadError> {
-        if depth > MAX_DEPTH {
+        let path = pos.path;
+        if pos.depth > MAX_TEMPLATE_DEPTH {
             return Err(self.malformed(path, "nesting too deep"));
         }
         let TemplateValue::Object(entries) = v else {
@@ -406,7 +487,7 @@ impl Compiler<'_> {
                     let mut children = Vec::with_capacity(items.len());
                     for (i, item) in items.iter().enumerate() {
                         let path = format!("{path}[{i}]");
-                        children.push(self.object(item, schema, &path, depth + 1, negative)?);
+                        children.push(self.object(item, schema, pos.nested(&path, false))?);
                     }
                     if key == "$and" {
                         TCond::And(children)
@@ -417,14 +498,12 @@ impl Compiler<'_> {
                 "$not" => TCond::Not(Box::new(self.object(
                     value,
                     schema,
-                    &path,
-                    depth + 1,
-                    !negative,
+                    pos.nested(&path, true),
                 )?)),
                 op if op.starts_with('$') => {
                     return Err(self.err(&path, LoadErrorKind::UnknownOperator(op.to_owned())));
                 }
-                name => self.field(name, value, schema, &path, depth, negative)?,
+                name => self.field(name, value, schema, pos.at(&path))?,
             });
         }
         Ok(and(out))
@@ -436,147 +515,136 @@ impl Compiler<'_> {
         name: &str,
         v: &TemplateValue,
         schema: &'static Schema,
-        path: &str,
-        depth: usize,
-        negative: bool,
+        pos: Pos<'_>,
     ) -> Result<TCond, LoadError> {
         let Some((idx, def)) = schema
             .index_of(name)
             .and_then(|idx| schema.field(idx).map(|def| (idx, def)))
         else {
-            return Err(self.err(path, LoadErrorKind::UnknownField(name.to_owned())));
+            return Err(self.err(pos.path, LoadErrorKind::UnknownField(name.to_owned())));
         };
         match def.kind() {
-            FieldKind::Scalar { kind, nullable } => {
-                self.scalar(idx, kind, nullable, v, path, negative)
-            }
+            FieldKind::Scalar { kind, nullable } => self.scalar(
+                ScalarField {
+                    idx,
+                    kind,
+                    nullable,
+                },
+                v,
+                pos,
+            ),
             FieldKind::Opaque => Err(self.malformed(
-                path,
+                pos.path,
                 format!("`{name}` is an opaque field and cannot be used in conditions"),
             )),
             FieldKind::Relation {
                 target,
                 cardinality,
                 nullable,
-            } => self.relation(idx, target, cardinality, nullable, v, path, depth, negative),
+            } => self.relation(
+                RelationField {
+                    idx,
+                    target,
+                    cardinality,
+                    nullable,
+                },
+                v,
+                pos,
+            ),
         }
     }
 
-    /// A scalar field's value: a bare operand (`$eq`) or an operator object.
+    /// Scalar field `f`'s value: a bare operand (`$eq`) or an operator
+    /// object.
     fn scalar(
         &mut self,
-        field: FieldIdx,
-        kind: Kind,
-        nullable: bool,
+        f: ScalarField,
         v: &TemplateValue,
-        path: &str,
-        negative: bool,
+        pos: Pos<'_>,
     ) -> Result<TCond, LoadError> {
         let TemplateValue::Object(ops) = v else {
-            return self.op("$eq", field, kind, nullable, v, path, negative);
+            return self.op(CmpOp::Eq.template_key(), f, v, pos);
         };
         if ops.is_empty() {
-            return Err(self.malformed(path, "empty operator object"));
+            return Err(self.malformed(pos.path, "empty operator object"));
         }
         let mut out = Vec::with_capacity(ops.len());
         for (op, operand) in ops {
-            let path = format!("{path}.{op}");
-            out.push(self.op(op, field, kind, nullable, operand, &path, negative)?);
+            let path = format!("{}.{op}", pos.path);
+            out.push(self.op(op, f, operand, pos.at(&path))?);
         }
         Ok(and(out))
     }
 
-    /// One scalar operator applied to `v`.
-    #[allow(clippy::too_many_arguments)]
+    /// One operator on scalar field `f`, applied to `v`.
     fn op(
         &mut self,
         op: &str,
-        field: FieldIdx,
-        kind: Kind,
-        nullable: bool,
+        f: ScalarField,
         v: &TemplateValue,
-        path: &str,
-        negative: bool,
+        pos: Pos<'_>,
     ) -> Result<TCond, LoadError> {
-        let def = FieldKind::Scalar { kind, nullable };
+        let Pos { path, negative, .. } = pos;
+        let ScalarField {
+            idx: field, kind, ..
+        } = f;
         // The operator's use of the field, checked by the rules `build()`
         // applies to code-built conditions.
-        let check = |u| validate::check(def, u).map_err(|m| self.misuse(path, op, m));
+        let check = |u| validate::check(f.def(), u).map_err(|m| self.misuse(path, op, m));
+        if let Some(cmp) = CmpOp::from_template_key(op) {
+            if matches!(v, TemplateValue::Null) && matches!(cmp, CmpOp::Eq | CmpOp::Ne) {
+                return self.null_test(field, f.def(), cmp == CmpOp::Eq, path);
+            }
+            check(Use::Cmp(cmp))?;
+            return Ok(TCond::Cmp {
+                field,
+                op: cmp,
+                value: self.operand(kind, v, path, negative)?,
+            });
+        }
+        if let Some(text_op) = StrOp::from_template_key(op) {
+            check(Use::Str(text_op))?;
+            return Ok(TCond::Str {
+                field,
+                op: text_op,
+                value: self.operand(kind, v, path, negative)?,
+            });
+        }
         match op {
-            "$eq" | "$ne" if matches!(v, TemplateValue::Null) => {
-                self.null_test(field, def, op == "$eq", path)
-            }
-            "$eq" | "$ne" | "$lt" | "$lte" | "$gt" | "$gte" => {
-                let cmp = match op {
-                    "$eq" => CmpOp::Eq,
-                    "$ne" => CmpOp::Ne,
-                    "$lt" => CmpOp::Lt,
-                    "$lte" => CmpOp::Lte,
-                    "$gt" => CmpOp::Gt,
-                    _ => CmpOp::Gte,
-                };
-                check(Use::Cmp(cmp))?;
-                Ok(TCond::Cmp {
-                    field,
-                    op: cmp,
-                    value: self.operand(kind, v, path, negative)?,
-                })
-            }
-            "$contains" | "$startsWith" | "$endsWith" => {
-                let text_op = match op {
-                    "$contains" => StrOp::Contains,
-                    "$startsWith" => StrOp::StartsWith,
-                    _ => StrOp::EndsWith,
-                };
-                check(Use::Str(text_op))?;
-                Ok(TCond::Str {
-                    field,
-                    op: text_op,
-                    value: self.operand(kind, v, path, negative)?,
-                })
-            }
-            "$in" => {
+            IN_KEY => {
                 check(Use::List)?;
                 Ok(TCond::In {
                     field,
                     values: self.list(kind, v, path, negative)?,
                 })
             }
-            "$nin" => {
+            NIN_KEY => {
                 check(Use::List)?;
                 Ok(TCond::NotIn {
                     field,
                     values: self.list(kind, v, path, negative)?,
                 })
             }
-            "$isNull" => {
+            IS_NULL_KEY => {
                 let null = self.flag(v, path)?;
-                self.null_test(field, def, null, path)
+                self.null_test(field, f.def(), null, path)
             }
             _ => Err(self.err(path, LoadErrorKind::UnknownOperator(op.to_owned()))),
         }
     }
 
-    /// A to-one or to-many relation field's value.
-    #[allow(clippy::too_many_arguments)]
+    /// To-one or to-many relation field `f`'s value.
     fn relation(
         &mut self,
-        relation: FieldIdx,
-        target: fn() -> &'static Schema,
-        cardinality: CardinalityKind,
-        nullable: bool,
+        f: RelationField,
         v: &TemplateValue,
-        path: &str,
-        depth: usize,
-        negative: bool,
+        pos: Pos<'_>,
     ) -> Result<TCond, LoadError> {
-        let def = FieldKind::Relation {
-            target,
-            cardinality,
-            nullable,
-        };
-        let target = target();
-        let to_one = cardinality == CardinalityKind::ToOne;
+        let path = pos.path;
+        let relation = f.idx;
+        let def = f.def();
+        let target = f.target();
+        let to_one = f.cardinality == CardinalityKind::ToOne;
         let entries = match v {
             TemplateValue::Object(entries) => entries,
             TemplateValue::Null => return self.null_test(relation, def, true, path),
@@ -593,20 +661,23 @@ impl Compiler<'_> {
             }
         };
         if to_one {
-            if !entries.iter().any(|(k, _)| k == "$isNull" || k == "$none") {
+            if !entries
+                .iter()
+                .any(|(k, _)| k == IS_NULL_KEY || k == "$none")
+            {
                 // A condition scoped to the target.
-                let cond = self.object(v, target, path, depth + 1, negative)?;
+                let cond = self.object(v, target, pos.nested(path, false))?;
                 return self.rel(relation, def, Quant::One, cond, path);
             }
             let [(key, value)] = entries.as_slice() else {
                 return Err(self.err(path, LoadErrorKind::MixedRelationObject));
             };
             let path = format!("{path}.{key}");
-            if key == "$isNull" {
+            if key == IS_NULL_KEY {
                 let null = self.flag(value, &path)?;
                 return self.null_test(relation, def, null, &path);
             }
-            let cond = self.object(value, target, &path, depth + 1, !negative)?;
+            let cond = self.object(value, target, pos.nested(&path, true))?;
             return self.rel(relation, def, Quant::None, cond, &path);
         }
         if let Some((key, _)) = entries
@@ -628,13 +699,13 @@ impl Compiler<'_> {
                 self.err(path, LoadErrorKind::MixedRelationObject)
             });
         };
-        let (quant, negative) = match key.as_str() {
-            "$some" => (Quant::Some, negative),
-            "$every" => (Quant::Every, negative),
-            _ => (Quant::None, !negative),
+        let (quant, flip) = match key.as_str() {
+            "$some" => (Quant::Some, false),
+            "$every" => (Quant::Every, false),
+            _ => (Quant::None, true),
         };
         let path = format!("{path}.{key}");
-        let cond = self.object(value, target, &path, depth + 1, negative)?;
+        let cond = self.object(value, target, pos.nested(&path, flip))?;
         self.rel(relation, def, quant, cond, &path)
     }
 

@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 use crate::condition::fold::{Folded, fold};
+use crate::condition::limits::{MAX_ALTERNATIONS, check_depth, check_finite};
 use crate::condition::validate;
 use crate::{
     Ability, Action, Bound, BuildError, Cond, Condition, FieldIdx, FieldMask, FieldRef, Resource,
@@ -191,77 +192,6 @@ impl<A: Action, S: Subject> GroupBuilder<A, S> {
     /// Validates, folds, expands, and indexes every group.
     pub fn build(self) -> Result<Ability<A, S>, BuildError> {
         build(self.finish())
-    }
-}
-
-/// Deepest allowed nesting of `And`/`Or`/`Not`/`Rel` in a rule condition
-/// (see [`BuildError::TooDeep`]).
-const MAX_DEPTH: usize = 64;
-
-/// Most `can`/`cannot` switches allowed among the rules of one cell (see
-/// [`BuildError::TooManyAlternations`]).
-const MAX_ALTERNATIONS: usize = 256;
-
-/// The nesting depth of `c`: every `And`, `Or`, `Not` and `Rel` is one level,
-/// leaves are at depth 0. Iterative, so any depth is measured safely.
-fn depth(c: &Condition) -> usize {
-    let mut max = 0;
-    let mut stack = vec![(c, 0)];
-    while let Some((c, d)) = stack.pop() {
-        let d = match c {
-            Condition::And(cs) | Condition::Or(cs) => {
-                stack.extend(cs.iter().map(|c| (c, d + 1)));
-                d + 1
-            }
-            Condition::Not(c) => {
-                stack.push((c, d + 1));
-                d + 1
-            }
-            Condition::Rel { cond, .. } => {
-                stack.extend(cond.as_deref().map(|c| (c, d + 1)));
-                d + 1
-            }
-            Condition::Cmp { .. }
-            | Condition::In { .. }
-            | Condition::NotIn { .. }
-            | Condition::Str { .. }
-            | Condition::IsNull(_)
-            | Condition::IsNotNull(_) => d,
-        };
-        max = max.max(d);
-    }
-    max
-}
-
-/// Rejects a condition nested deeper than [`MAX_DEPTH`]. Runs before any
-/// recursive pass over the condition.
-fn check_depth(c: &Condition, subject: &'static str) -> Result<(), BuildError> {
-    match depth(c) {
-        d if d > MAX_DEPTH => Err(BuildError::TooDeep { subject, depth: d }),
-        _ => Ok(()),
-    }
-}
-
-/// Rejects non-finite float operands anywhere in `c`.
-fn check_finite(c: &Condition) -> Result<(), BuildError> {
-    let bad = |v: &crate::Value| {
-        if v.is_finite() {
-            Ok(())
-        } else {
-            Err(BuildError::InvalidValue {
-                reason: format!("non-finite float operand {v:?}"),
-            })
-        }
-    };
-    match c {
-        Condition::Cmp { value, .. } => bad(value),
-        Condition::In { values, .. } | Condition::NotIn { values, .. } => {
-            values.iter().try_for_each(bad)
-        }
-        Condition::And(cs) | Condition::Or(cs) => cs.iter().try_for_each(check_finite),
-        Condition::Not(c) => check_finite(c),
-        Condition::Rel { cond, .. } => cond.as_deref().map_or(Ok(()), check_finite),
-        Condition::Str { .. } | Condition::IsNull(_) | Condition::IsNotNull(_) => Ok(()),
     }
 }
 

@@ -1,0 +1,29 @@
+error[E0271]: type mismatch resolving `<Vec<Tag> as RelationSlot>::Cardinality == ToOne`
+ --> tests/ui/fail/is_null_on_to_many.rs:9:24
+  |
+9 |     let _ = Post::TAGS.is_null();
+  |                        ^^^^^^^ expected `ToOne`, found `ToMany`
+  |
+note: required by a bound in `mandate::condition::cond::<impl mandate::Rel<R, T>>::is_null`
+ --> src/condition/cond.rs
+  |
+  |     pub fn is_null(self) -> Cond<R>
+  |            ------- required by a bound in this associated function
+  |     where
+  |         T: RelationSlot<Cardinality = ToOne, Nullability = Nullable>,
+  |                         ^^^^^^^^^^^^^^^^^^^ required by this bound in `mandate::condition::cond::<impl Rel<R, T>>::is_null`
+
+error[E0271]: type mismatch resolving `<Vec<Tag> as RelationSlot>::Nullability == Nullable`
+ --> tests/ui/fail/is_null_on_to_many.rs:9:24
+  |
+9 |     let _ = Post::TAGS.is_null();
+  |                        ^^^^^^^ expected `Nullable`, found `NonNull`
+  |
+note: required by a bound in `mandate::condition::cond::<impl mandate::Rel<R, T>>::is_null`
+ --> src/condition/cond.rs
+  |
+  |     pub fn is_null(self) -> Cond<R>
+  |            ------- required by a bound in this associated function
+  |     where
+  |         T: RelationSlot<Cardinality = ToOne, Nullability = Nullable>,
+  |                                              ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `mandate::condition::cond::<impl Rel<R, T>>::is_null`

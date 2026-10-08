@@ -1,0 +1,6 @@
+error: duplicate subject name `Post`
+ --> tests/ui/fail/subject_duplicate_name.rs:4:5
+  |
+4 | /     #[subject(rename = "Post")]
+5 | |     Article,
+  | |___________^

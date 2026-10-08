@@ -142,4 +142,29 @@ fn field_mask_ops() {
     assert!(s.is_subset(&all) && s.is_subset(&m));
     assert_eq!(s.union(m), m);
     assert_eq!(FieldMask::all(128).len(), 128);
+
+    // `difference`, exhaustively over both words and both edges of each word.
+    let mut b = FieldMask::default();
+    for i in [0u16, 63, 64, 127] {
+        b.insert(FieldIdx(i));
+    }
+    let d = FieldMask::all(128).difference(b);
+    for i in 0..128u16 {
+        assert_eq!(d.contains(FieldIdx(i)), !b.contains(FieldIdx(i)), "#{i}");
+    }
+    assert_eq!(d.len(), 124);
+    assert!(b.difference(b).is_empty());
+    assert_eq!(m.difference(FieldMask::default()), m);
+    assert_eq!(
+        FieldMask::all(128)
+            .difference(FieldMask::all(64))
+            .iter()
+            .collect::<Vec<_>>(),
+        (64..128).map(FieldIdx).collect::<Vec<_>>()
+    );
+    assert!(
+        FieldMask::all(64)
+            .difference(FieldMask::all(128))
+            .is_empty()
+    );
 }

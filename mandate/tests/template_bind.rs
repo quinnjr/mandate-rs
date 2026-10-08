@@ -1,31 +1,17 @@
 #![cfg(all(feature = "derive", feature = "chrono", feature = "uuid"))]
 mod common;
 use common::fixture::*;
+use common::spec::SPEC_EXAMPLE;
+use common::templates::not_date_time;
+use common::unresolved::as_tuples;
 use mandate::{
-    BindError, BindErrorKind, Bound, CmpOp, Condition, Context, FieldIdx, Kind, Quant,
-    RuleTemplate, Templates, Unresolved, UnresolvedOutcome, Value,
+    BindError, BindErrorKind, Bound, CmpOp, Condition, Context, FieldIdx, Kind, Quant, Resource,
+    RuleTemplate, Templates, UnresolvedOutcome, Value,
 };
 use serde_json::json;
 
 type T = Templates<Action, Subject>;
 type Ab = mandate::Ability<Action, Subject>;
-
-const SPEC_EXAMPLE: &str = r#"{
-  "action": "update",
-  "subject": "Post",
-  "conditions": {
-    "author_id": "${user.id}",
-    "status": { "$ne": "archived" },
-    "published_at": null,
-    "org": { "id": "${user.org_id}" },
-    "reviewer": { "$isNull": false },
-    "tags": { "$some": { "name": "rust" } },
-    "$or": [ { "status": "published" }, { "author_id": "${user.id}" } ]
-  },
-  "fields": ["title", "body"],
-  "inverted": false,
-  "reason": "Authors edit their own posts"
-}"#;
 
 const TITLE: FieldIdx = FieldIdx(3);
 const AUTHOR_ID: FieldIdx = FieldIdx(1);
@@ -64,14 +50,6 @@ fn bind_err(c: &str, u: serde_json::Value) -> BindError {
 
 fn build(bound: Bound<Action, Subject>) -> Ab {
     Ab::builder().extend(bound).build().unwrap()
-}
-
-fn unresolved(rule_index: usize, placeholder: &str, outcome: UnresolvedOutcome) -> Unresolved {
-    Unresolved {
-        rule_index,
-        placeholder: placeholder.into(),
-        outcome,
-    }
 }
 
 fn eq(field: FieldIdx, value: Value) -> Condition {
@@ -172,12 +150,8 @@ fn unresolved_required_in_can_drops_rule() {
         json!({"manager_id": null}),
     );
     assert_eq!(
-        bound.unresolved(),
-        [unresolved(
-            0,
-            "user.manager_id",
-            UnresolvedOutcome::LeafFalse
-        )]
+        as_tuples(bound.unresolved()),
+        [(0, "user.manager_id", UnresolvedOutcome::LeafFalse)]
     );
     assert_eq!(bound.rules()[0].condition(), Some(&Condition::Or(vec![])));
     assert!(build(bound).rules().is_empty());
@@ -201,8 +175,8 @@ fn unresolved_required_in_cannot_denies() {
         json!({"id": 1}),
     );
     assert_eq!(
-        bound.unresolved(),
-        [unresolved(1, "user.blocked", UnresolvedOutcome::LeafTrue)]
+        as_tuples(bound.unresolved()),
+        [(1, "user.blocked", UnresolvedOutcome::LeafTrue)]
     );
     let ability = build(bound);
     let rule = &ability.rules()[1];
@@ -215,15 +189,15 @@ fn unresolved_required_in_cannot_denies() {
 fn polarity_flips_under_not_and_none() {
     let bound = bind_can(r#"{"$not":{"author_id":"${user.x}"}}"#, json!({}));
     assert_eq!(
-        bound.unresolved(),
-        [unresolved(0, "user.x", UnresolvedOutcome::LeafTrue)]
+        as_tuples(bound.unresolved()),
+        [(0, "user.x", UnresolvedOutcome::LeafTrue)]
     );
     assert!(build(bound).rules().is_empty());
 
     let bound = bind_can(r#"{"tags":{"$none":{"name":"${user.tag}"}}}"#, json!({}));
     assert_eq!(
-        bound.unresolved(),
-        [unresolved(0, "user.tag", UnresolvedOutcome::LeafTrue)]
+        as_tuples(bound.unresolved()),
+        [(0, "user.tag", UnresolvedOutcome::LeafTrue)]
     );
     assert_eq!(
         build(bound).rules()[0].condition(),
@@ -259,12 +233,8 @@ fn optional_placeholder_drops_only_its_rule() {
     let bound = bind(rules, json!({}));
     // Only the optional placeholder is reported: the rule is gone.
     assert_eq!(
-        bound.unresolved(),
-        [unresolved(
-            1,
-            "user.blocked",
-            UnresolvedOutcome::RuleDropped
-        )]
+        as_tuples(bound.unresolved()),
+        [(1, "user.blocked", UnresolvedOutcome::RuleDropped)]
     );
     assert_eq!(bound.rules().len(), 1);
     assert!(!bound.rules()[0].inverted());
@@ -273,6 +243,41 @@ fn optional_placeholder_drops_only_its_rule() {
     let bound = bind(rules, json!({"blocked": 7, "title": "Hello"}));
     assert!(bound.unresolved().is_empty());
     assert!(!build(bound).can(Action::Read, &post()));
+}
+
+/// `Unresolved::inverted` is whether the placeholder's rule is a `cannot`
+/// rule, for a dropped rule and a leaf constant alike, whatever the leaf
+/// became.
+#[test]
+fn unresolved_reports_whether_its_rule_is_inverted() {
+    let bound = bind(
+        r#"{"action":"read","subject":"Post","inverted":true,
+            "conditions":{"author_id":"${user.blocked?}"}},
+           {"action":"read","subject":"Post","inverted":true,
+            "conditions":{"author_id":"${user.banned}"}},
+           {"action":"read","subject":"Post","inverted":true,
+            "conditions":{"$not":{"author_id":"${user.trusted}"}}},
+           {"action":"read","subject":"Post",
+            "conditions":{"author_id":"${user.id}"}},
+           {"action":"read","subject":"Post",
+            "conditions":{"author_id":"${user.friend?}"}}"#,
+        json!({}),
+    );
+    let got: Vec<_> = bound
+        .unresolved()
+        .iter()
+        .map(|u| (u.rule_index, u.outcome, u.inverted))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (0, UnresolvedOutcome::RuleDropped, true),
+            (1, UnresolvedOutcome::LeafTrue, true),
+            (2, UnresolvedOutcome::LeafFalse, true),
+            (3, UnresolvedOutcome::LeafFalse, false),
+            (4, UnresolvedOutcome::RuleDropped, false),
+        ]
+    );
 }
 
 #[test]
@@ -317,8 +322,8 @@ fn list_placeholders() {
     // An unresolved list placeholder replaces its leaf like a scalar one.
     let bound = bind_can(c, json!({}));
     assert_eq!(
-        bound.unresolved(),
-        [unresolved(0, "user.statuses", UnresolvedOutcome::LeafFalse)]
+        as_tuples(bound.unresolved()),
+        [(0, "user.statuses", UnresolvedOutcome::LeafFalse)]
     );
 }
 
@@ -337,8 +342,8 @@ fn placeholder_paths_walk_objects() {
     ] {
         let bound = bind_can(c, u);
         assert_eq!(
-            bound.unresolved(),
-            [unresolved(0, "user.org.id", UnresolvedOutcome::LeafFalse)]
+            as_tuples(bound.unresolved()),
+            [(0, "user.org.id", UnresolvedOutcome::LeafFalse)]
         );
     }
 
@@ -358,16 +363,21 @@ fn bind_errors() {
     use BindErrorKind::*;
 
     let e = bind_err(r#"{"author_id":"${user.id}"}"#, json!({"id": "seven"}));
-    assert_eq!(
-        e,
-        BindError {
-            rule_index: 0,
-            path: "conditions.author_id".into(),
-            kind: TypeMismatch {
-                expected: Kind::Int,
-                found: "\"seven\"".into()
-            }
-        }
+    assert!(
+        matches!(
+            &e,
+            BindError {
+                rule_index: 0,
+                path,
+                kind: TypeMismatch {
+                    expected: Kind::Int,
+                    found,
+                    ..
+                },
+                ..
+            } if path == "conditions.author_id" && found == "\"seven\""
+        ),
+        "{e:?}"
     );
     assert_eq!(
         e.to_string(),
@@ -381,14 +391,17 @@ fn bind_errors() {
         .kind,
         UnknownVariant("Published".into())
     );
-    assert!(matches!(
-        bind_err(
-            r#"{"published_at":{"$lt":"${user.since}"}}"#,
-            json!({"since": "yesterday"})
-        )
-        .kind,
-        InvalidValue(_)
-    ));
+    // The reason starts with our text and ends with chrono's own message.
+    let e = bind_err(
+        r#"{"published_at":{"$lt":"${user.since}"}}"#,
+        json!({"since": "yesterday"}),
+    );
+    assert!(
+        e.rule_index == 0
+            && e.path == "conditions.published_at.$lt"
+            && matches!(&e.kind, InvalidValue(r) if r.starts_with(&not_date_time("yesterday"))),
+        "{e:?}"
+    );
 
     // Kinds follow the compile-time literal rules.
     for (c, u, expected, found) in [
@@ -429,13 +442,13 @@ fn bind_errors() {
             "1",
         ),
     ] {
-        assert_eq!(
-            bind_err(c, u).kind,
-            TypeMismatch {
-                expected,
-                found: found.into()
-            },
-            "{c}"
+        let kind = bind_err(c, u).kind;
+        assert!(
+            matches!(
+                &kind,
+                TypeMismatch { expected: e, found: f, .. } if *e == expected && f == found
+            ),
+            "{c}: {kind:?}"
         );
     }
     let bound = bind_can(r#"{"score":"${user.v}"}"#, json!({"v": 2}));
@@ -547,7 +560,7 @@ fn null_conditions_and_fields_bind_like_omitted() {
     assert!(a.can_field(Action::Update, &p, Post::METADATA));
     assert_eq!(
         a.permitted_fields(Action::Update, &p).unwrap().mask(),
-        mandate::FieldMask::all(13)
+        mandate::FieldMask::all(Post::schema().fields().len())
     );
     // A null-conditions `cannot` denies unconditionally.
     let a = build(bind(

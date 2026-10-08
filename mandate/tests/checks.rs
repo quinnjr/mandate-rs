@@ -1,10 +1,9 @@
 #![cfg(all(feature = "derive", feature = "chrono", feature = "uuid"))]
 mod common;
+use common::assert_matches;
 use common::fixture::*;
-use mandate::{
-    Ability, CheckError, DynResource, EvalError, FieldDef, FieldIdx, FieldRef, Kind, RelationRef,
-    Resource, Schema, SubjectResource, ValueRef,
-};
+use common::imposter::Imposter;
+use mandate::{Ability, CheckError, EvalError, FieldRef, Resource};
 
 type Ab = Ability<Action, Subject>;
 
@@ -97,6 +96,32 @@ fn field_restrictions() {
 }
 
 #[test]
+fn field_outside_the_schema_is_denied() {
+    let p = post();
+    let a = Ab::builder()
+        .can(Action::Read, Subject::Post)
+        .build()
+        .unwrap();
+    assert!(a.can_field(Action::Read, &p, Post::TITLE));
+    // Hand-built handles past the end of the schema, up to the edges of
+    // `FieldMask` (128 fields) and of the index type.
+    let n = Post::schema().fields().len() as u16;
+    for idx in [n, n + 1, 127, 128, 500, u16::MAX] {
+        let missing = FieldRef::<Post>::new(idx);
+        assert!(!a.can_field(Action::Read, &p, missing), "#{idx}");
+        let e = a.check_field(Action::Read, &p, missing).unwrap_err();
+        assert!(
+            matches!(
+                &e,
+                CheckError::Unresolvable(EvalError::InvalidCondition { path, .. })
+                    if *path == format!("#{idx}")
+            ),
+            "{e:?}"
+        );
+    }
+}
+
+#[test]
 fn can_type_semantics() {
     let a = Ab::builder()
         .can(Action::Read, Subject::Post)
@@ -117,7 +142,14 @@ fn can_type_semantics() {
         .build()
         .unwrap();
     assert!(!a.can_type(Action::Read, Subject::Post));
-    assert!(a.check_type(Action::Read, Subject::Post).is_err());
+    let e = a.check_type(Action::Read, Subject::Post).unwrap_err();
+    assert!(
+        e.action == Action::Read
+            && e.subject == Subject::Post
+            && e.field.is_none()
+            && e.reason.is_none(),
+        "{e:?}"
+    );
 }
 
 #[test]
@@ -155,7 +187,7 @@ fn check_reason_and_display() {
         e.to_string(),
         "cannot delete Post: Published posts cannot be deleted"
     );
-    assert!(matches!(e, CheckError::Forbidden(_)));
+    assert_matches!(e, CheckError::Forbidden(_));
     assert!(a.check(Action::Delete, &draft(7)).is_ok());
     let e = a.check_field(Action::Read, &post(), Post::BODY);
     assert!(e.is_ok());
@@ -175,50 +207,26 @@ fn fail_closed_on_unloaded() {
         .build()
         .unwrap();
     let p = TPost {
-        loaded: Loaded(vec![]),
-        id: 1,
-        author_id: 7,
-        reviewer_id: None,
         title: "t".into(),
-        status: Status::Published,
-        score: 1.0,
         org: Lazy::NotLoaded,
         reviewer: Lazy::NotLoaded,
         tags: Lazy::NotLoaded,
+        ..loaded_tpost()
     };
     assert!(!a.can(Action::Read, &p));
-    assert_eq!(
-        a.check(Action::Read, &p).unwrap_err(),
-        CheckError::Unresolvable(EvalError::NotLoaded {
-            path: "tags".into()
-        })
+    let e = a.check(Action::Read, &p).unwrap_err();
+    assert!(
+        matches!(
+            &e,
+            CheckError::Unresolvable(EvalError::NotLoaded { path, .. }) if path == "tags"
+        ),
+        "{e:?}"
     );
-    assert!(a.permitted_fields(Action::Read, &p).is_err());
-}
-
-struct Imposter;
-static IMPOSTER: Schema = Schema::new("Imposter", &[FieldDef::scalar("id", Kind::Int, false)]);
-impl Resource for Imposter {
-    fn schema() -> &'static Schema {
-        &IMPOSTER
-    }
-    fn as_dyn(&self) -> &dyn DynResource {
-        self
-    }
-}
-impl DynResource for Imposter {
-    fn resource_schema(&self) -> &'static Schema {
-        &IMPOSTER
-    }
-    fn value(&self, _: FieldIdx) -> ValueRef<'_> {
-        ValueRef::NotLoaded
-    }
-    fn relation(&self, _: FieldIdx) -> RelationRef<'_> {
-        RelationRef::NotLoaded
-    }
-}
-impl SubjectResource<Subject> for Imposter {
-    const SUBJECT: Subject = Subject::Post;
+    let e = a.permitted_fields(Action::Read, &p).unwrap_err();
+    assert!(
+        matches!(&e, EvalError::NotLoaded { path, .. } if path == "tags"),
+        "{e:?}"
+    );
 }
 
 #[test]
@@ -228,27 +236,37 @@ fn schema_mismatch_guard() {
         .build()
         .unwrap();
     assert!(!a.can(Action::Read, &Imposter));
-    let mismatch = EvalError::SchemaMismatch {
-        expected: "Post",
-        found: "Imposter",
+    let mismatch = |e: &EvalError| {
+        matches!(
+            e,
+            EvalError::SchemaMismatch {
+                expected: "Post",
+                found: "Imposter",
+                ..
+            }
+        )
     };
-    assert_eq!(
-        a.check(Action::Read, &Imposter).unwrap_err(),
-        CheckError::Unresolvable(mismatch.clone())
+    assert_matches!(
+        a.check(Action::Read, &Imposter),
+        Err(CheckError::Unresolvable(e)) if mismatch(&e)
     );
-    assert_eq!(
-        a.permitted_fields(Action::Read, &Imposter).unwrap_err(),
-        mismatch
+    assert_matches!(
+        a.permitted_fields(Action::Read, &Imposter),
+        Err(e) if mismatch(&e)
     );
     let id = FieldRef::<Imposter>::new(0);
     assert!(!a.can_field(Action::Read, &Imposter, id));
-    assert_eq!(
-        a.check_field(Action::Read, &Imposter, id).unwrap_err(),
-        CheckError::Unresolvable(mismatch.clone())
+    assert_matches!(
+        a.check_field(Action::Read, &Imposter, id),
+        Err(CheckError::Unresolvable(e)) if mismatch(&e)
     );
-    assert_eq!(
+    // `.err()`: a `Projection<Imposter>` is not `Debug`.
+    assert_matches!(
         a.projection::<Imposter>(Action::Read).err(),
-        Some(mismatch.clone())
+        Some(e) if mismatch(&e)
     );
-    assert_eq!(a.field_plan::<Imposter>(Action::Read).err(), Some(mismatch));
+    assert_matches!(
+        a.field_plan::<Imposter>(Action::Read),
+        Err(e) if mismatch(&e)
+    );
 }
