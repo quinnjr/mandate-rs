@@ -17,6 +17,7 @@ pub mod relation;
 pub mod rule;
 pub mod scalar;
 pub mod schema;
+pub mod template;
 pub mod traits;
 pub mod value;
 
@@ -37,6 +38,7 @@ pub use scalar::{
     IntoValue, NonNull, Nullability, Nullable, Ordered, Scalar, ScalarValue, Textual,
 };
 pub use schema::{CardinalityKind, FieldDef, FieldIdx, FieldKind, Kind, MAX_FIELDS, Schema};
+pub use template::{OneOrMany, RuleTemplate, TemplateValue};
 pub use traits::{Action, DynResource, LoadState, Resource, Subject, SubjectResource};
 #[cfg(feature = "chrono")]
 pub use value::truncate_micros;
