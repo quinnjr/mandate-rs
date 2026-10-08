@@ -1,5 +1,9 @@
 //! Error types.
 
+use std::borrow::Cow;
+
+use crate::{Action, Subject};
+
 /// Why a condition could not be evaluated against a resource.
 ///
 /// Evaluation fails closed: neither case is ever coerced to `false`, since
@@ -61,4 +65,65 @@ pub enum BuildError {
         /// What is wrong with the value.
         reason: String,
     },
+}
+
+/// An action that the rules do not permit.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Forbidden<A, S> {
+    /// The denied action.
+    pub action: A,
+    /// The subject it was attempted on.
+    pub subject: S,
+    /// The field, for field-level checks.
+    pub field: Option<&'static str>,
+    /// The reason from the deciding `cannot` rule, if it has one.
+    pub reason: Option<Cow<'static, str>>,
+}
+
+impl<A: Action, S: Subject> core::fmt::Display for Forbidden<A, S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "cannot {} {}", self.action.name(), self.subject.name())?;
+        if let Some(field) = self.field {
+            write!(f, ".{field}")?;
+        }
+        if let Some(reason) = &self.reason {
+            write!(f, ": {reason}")?;
+        }
+        Ok(())
+    }
+}
+
+impl<A: Action, S: Subject> std::error::Error for Forbidden<A, S> {}
+
+/// Why a `check*` call did not succeed.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CheckError<A, S> {
+    /// The rules deny the action.
+    Forbidden(Forbidden<A, S>),
+    /// The rules could not be evaluated (unloaded data or schema mismatch).
+    Unresolvable(EvalError),
+}
+
+impl<A: Action, S: Subject> core::fmt::Display for CheckError<A, S> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            CheckError::Forbidden(e) => e.fmt(f),
+            CheckError::Unresolvable(e) => e.fmt(f),
+        }
+    }
+}
+
+impl<A: Action, S: Subject> std::error::Error for CheckError<A, S> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            CheckError::Forbidden(e) => Some(e),
+            CheckError::Unresolvable(e) => Some(e),
+        }
+    }
+}
+
+impl<A, S> From<Forbidden<A, S>> for CheckError<A, S> {
+    fn from(e: Forbidden<A, S>) -> Self {
+        CheckError::Forbidden(e)
+    }
 }

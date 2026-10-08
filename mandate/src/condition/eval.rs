@@ -18,11 +18,6 @@ use crate::{
 /// `And`/`Or` evaluate their children, and quantifiers their related rows,
 /// in order, stopping at the first one that decides the result; data that is
 /// not loaded is an error only if it is reached.
-// Only the unit tests below call `eval` until `Ability` does.
-#[cfg_attr(
-    not(all(test, feature = "derive", feature = "chrono", feature = "uuid")),
-    allow(dead_code)
-)]
 pub(crate) fn eval(
     cond: &Condition,
     schema: &'static Schema,

@@ -1,6 +1,10 @@
 //! The immutable rule set and its dense index.
 
-use crate::{AbilityBuilder, Action, Rule, Subject};
+use crate::condition::eval::eval;
+use crate::{
+    AbilityBuilder, Action, CheckError, DynResource, EvalError, FieldIdx, FieldMask, FieldRef,
+    FieldSet, Forbidden, Resource, Rule, Subject, SubjectResource,
+};
 
 /// An immutable, indexed set of rules. `Send + Sync`; wrap in `Arc` to share.
 #[derive(Clone, Debug)]
@@ -46,10 +50,173 @@ impl<A: Action, S: Subject> Ability<A, S> {
     }
 
     /// Indices of the rules covering `(a, s)`, in definition order.
-    // Until the check API (Task 10) uses it, only tests do.
-    #[allow(dead_code)]
     pub(crate) fn cell(&self, a: A, s: S) -> &[u32] {
         &self.index[s.index() * A::COUNT + a.index()]
+    }
+
+    /// Fails closed unless `R`'s schema is the schema of its bound subject (spec §4.2).
+    pub(crate) fn guard<R: SubjectResource<S>>() -> Result<(), EvalError> {
+        let found = R::schema();
+        match R::SUBJECT.schema() {
+            Some(expected) if core::ptr::eq(expected, found) => Ok(()),
+            Some(expected) => Err(EvalError::SchemaMismatch {
+                expected: expected.name,
+                found: found.name,
+            }),
+            None => Err(EvalError::SchemaMismatch {
+                expected: R::SUBJECT.name(),
+                found: found.name,
+            }),
+        }
+    }
+
+    /// Rules covering `(a, R::SUBJECT)`, last to first, after the §7.2 restriction filter.
+    fn applicable(
+        &self,
+        a: A,
+        s: S,
+        field: Option<FieldIdx>,
+    ) -> impl Iterator<Item = &Rule<A, S>> {
+        self.cell(a, s)
+            .iter()
+            .rev()
+            .map(|&i| &self.rules[i as usize])
+            .filter(move |r| match field {
+                Some(f) => r.fields().is_none_or(|m| m.contains(f)),
+                None => !r.inverted() || r.fields().is_none(),
+            })
+    }
+
+    /// The rule that decides an instance check (§7.1), if any.
+    fn decide<R: SubjectResource<S>>(
+        &self,
+        action: A,
+        resource: &R,
+        field: Option<FieldIdx>,
+    ) -> Result<Option<&Rule<A, S>>, EvalError> {
+        Self::guard::<R>()?;
+        let dynr = resource.as_dyn();
+        for rule in self.applicable(action, R::SUBJECT, field) {
+            let hit = match rule.condition() {
+                None => true,
+                Some(c) => eval(c, R::schema(), dynr)?,
+            };
+            if hit {
+                return Ok(Some(rule));
+            }
+        }
+        Ok(None)
+    }
+
+    fn verdict(
+        &self,
+        action: A,
+        subject: S,
+        field: Option<&'static str>,
+        decided: Option<&Rule<A, S>>,
+    ) -> Result<(), Forbidden<A, S>> {
+        match decided {
+            Some(r) if !r.inverted() => Ok(()),
+            _ => Err(Forbidden {
+                action,
+                subject,
+                field,
+                reason: decided
+                    .and_then(|r| r.reason())
+                    .map(|t| std::borrow::Cow::Owned(t.to_owned())),
+            }),
+        }
+    }
+
+    fn field_name<R: Resource>(field: FieldIdx) -> Option<&'static str> {
+        R::schema().field(field).map(|d| d.name)
+    }
+
+    /// Whether `action` is allowed on `resource`. Fails closed (`false`) on any error.
+    pub fn can<R: SubjectResource<S>>(&self, action: A, resource: &R) -> bool {
+        matches!(self.decide(action, resource, None), Ok(Some(r)) if !r.inverted())
+    }
+
+    /// Whether `action` is allowed on the `field` of `resource`. Fails closed.
+    pub fn can_field<R: SubjectResource<S>>(
+        &self,
+        action: A,
+        resource: &R,
+        field: impl Into<FieldRef<R>>,
+    ) -> bool {
+        let f = field.into().idx();
+        matches!(self.decide(action, resource, Some(f)), Ok(Some(r)) if !r.inverted())
+    }
+
+    /// Like [`can`](Self::can), but explains a denial or an evaluation failure.
+    pub fn check<R: SubjectResource<S>>(
+        &self,
+        action: A,
+        resource: &R,
+    ) -> Result<(), CheckError<A, S>> {
+        let decided = self
+            .decide(action, resource, None)
+            .map_err(CheckError::Unresolvable)?;
+        Ok(self.verdict(action, R::SUBJECT, None, decided)?)
+    }
+
+    /// Like [`can_field`](Self::can_field), but explains a denial or an evaluation failure.
+    pub fn check_field<R: SubjectResource<S>>(
+        &self,
+        action: A,
+        resource: &R,
+        field: impl Into<FieldRef<R>>,
+    ) -> Result<(), CheckError<A, S>> {
+        let f = field.into().idx();
+        let decided = self
+            .decide(action, resource, Some(f))
+            .map_err(CheckError::Unresolvable)?;
+        Ok(self.verdict(action, R::SUBJECT, Self::field_name::<R>(f), decided)?)
+    }
+
+    /// The rule that decides a type-level check (§7.3), if any.
+    fn decide_type(&self, action: A, subject: S) -> Option<&Rule<A, S>> {
+        self.applicable(action, subject, None)
+            .find(|r| r.condition().is_none() || !r.inverted())
+    }
+
+    /// Whether `action` is possibly allowed on some instance of `subject`.
+    pub fn can_type(&self, action: A, subject: S) -> bool {
+        matches!(self.decide_type(action, subject), Some(r) if !r.inverted())
+    }
+
+    /// Like [`can_type`](Self::can_type), but explains a denial.
+    pub fn check_type(&self, action: A, subject: S) -> Result<(), Forbidden<A, S>> {
+        self.verdict(action, subject, None, self.decide_type(action, subject))
+    }
+
+    /// The fields of `resource` that `action` is permitted on (§7.4).
+    pub fn permitted_fields<R: SubjectResource<S>>(
+        &self,
+        action: A,
+        resource: &R,
+    ) -> Result<FieldSet<R>, EvalError> {
+        Self::guard::<R>()?;
+        let dynr: &dyn DynResource = resource.as_dyn();
+        let all = FieldMask::all(R::schema().fields.len());
+        let mut set = FieldMask::default();
+        for &i in self.cell(action, R::SUBJECT) {
+            let rule = &self.rules[i as usize];
+            if let Some(c) = rule.condition() {
+                if !eval(c, R::schema(), dynr)? {
+                    continue;
+                }
+            }
+            let fields = rule.fields().unwrap_or(all);
+            if rule.inverted() {
+                for f in fields.iter() {
+                    set.remove(f);
+                }
+            } else {
+                set = set.union(fields);
+            }
+        }
+        Ok(FieldSet::from_mask(set))
     }
 }
 

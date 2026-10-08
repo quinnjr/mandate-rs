@@ -20,7 +20,7 @@ pub mod value;
 pub use ability::Ability;
 pub use builder::{AbilityBuilder, GroupBuilder, IntoActions, IntoSubjects};
 pub use condition::{CmpOp, Cond, Condition, Quant, StrOp};
-pub use error::{BuildError, EvalError};
+pub use error::{BuildError, CheckError, EvalError, Forbidden};
 pub use field::{Field, FieldRef, Opaque, Rel};
 pub use fieldset::{FieldMask, FieldSet};
 #[cfg(feature = "derive")]

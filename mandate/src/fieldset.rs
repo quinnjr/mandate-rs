@@ -67,7 +67,6 @@ pub struct FieldSet<R> {
 }
 
 impl<R> FieldSet<R> {
-    #[allow(dead_code)] // first used by the permitted-fields walk
     pub(crate) fn from_mask(mask: FieldMask) -> Self {
         FieldSet {
             mask,
