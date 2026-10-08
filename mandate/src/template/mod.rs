@@ -3,6 +3,7 @@
 
 mod bind;
 mod compile;
+mod serialize;
 
 pub use bind::{Bound, Context};
 pub use compile::Templates;
