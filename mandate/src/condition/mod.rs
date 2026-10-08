@@ -3,6 +3,7 @@
 mod cond;
 pub(crate) mod eval;
 pub(crate) mod fold;
+pub(crate) mod nnf;
 
 pub use cond::Cond;
 

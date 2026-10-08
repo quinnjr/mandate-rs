@@ -1,9 +1,11 @@
 //! The immutable rule set and its dense index.
 
 use crate::condition::eval::eval;
+use crate::condition::fold::{Folded, fold};
+use crate::condition::nnf::nnf;
 use crate::{
-    AbilityBuilder, Action, CheckError, DynResource, EvalError, FieldIdx, FieldMask, FieldRef,
-    FieldSet, Forbidden, Resource, Rule, Subject, SubjectResource,
+    AbilityBuilder, Access, Action, CheckError, Condition, DynResource, EvalError, FieldIdx,
+    FieldMask, FieldRef, FieldSet, Forbidden, Plan, Resource, Rule, Subject, SubjectResource,
 };
 
 /// An immutable, indexed set of rules. `Send + Sync`; wrap in `Arc` to share.
@@ -70,16 +72,15 @@ impl<A: Action, S: Subject> Ability<A, S> {
         }
     }
 
-    /// Rules covering `(a, R::SUBJECT)`, last to first, after the §7.2 restriction filter.
+    /// Rules covering `(a, s)`, in definition order, after the §7.2 restriction filter.
     fn applicable(
         &self,
         a: A,
         s: S,
         field: Option<FieldIdx>,
-    ) -> impl Iterator<Item = &Rule<A, S>> {
+    ) -> impl DoubleEndedIterator<Item = &Rule<A, S>> {
         self.cell(a, s)
             .iter()
-            .rev()
             .map(|&i| &self.rules[i as usize])
             .filter(move |r| match field {
                 Some(f) => r.fields().is_none_or(|m| m.contains(f)),
@@ -96,7 +97,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     ) -> Result<Option<&Rule<A, S>>, EvalError> {
         Self::guard::<R>()?;
         let dynr = resource.as_dyn();
-        for rule in self.applicable(action, R::SUBJECT, field) {
+        for rule in self.applicable(action, R::SUBJECT, field).rev() {
             let hit = match rule.condition() {
                 None => true,
                 Some(c) => eval(c, R::schema(), dynr)?,
@@ -177,6 +178,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// The rule that decides a type-level check (§7.3), if any.
     fn decide_type(&self, action: A, subject: S) -> Option<&Rule<A, S>> {
         self.applicable(action, subject, None)
+            .rev()
             .find(|r| r.condition().is_none() || !r.inverted())
     }
 
@@ -188,6 +190,36 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// Like [`can_type`](Self::can_type), but explains a denial.
     pub fn check_type(&self, action: A, subject: S) -> Result<(), Forbidden<A, S>> {
         self.verdict(action, subject, None, self.decide_type(action, subject))
+    }
+
+    /// The rows of `R` that `action` is allowed on, as a filter for a
+    /// database query (§7.6, §8).
+    ///
+    /// A fully loaded `r` is in the result exactly when [`can`](Self::can)
+    /// allows `action` on it. Fails closed with [`EvalError::SchemaMismatch`]
+    /// unless `R`'s schema is its subject's.
+    pub fn access<R: SubjectResource<S>>(&self, action: A) -> Result<Access<R>, EvalError> {
+        Self::guard::<R>()?;
+        let schema = R::schema();
+        // The §7.6 formula; an unconditional rule's `true` resets `f`.
+        let mut f = Condition::Or(vec![]);
+        for rule in self.applicable(action, R::SUBJECT, None) {
+            let c = rule.condition().cloned().unwrap_or(Condition::And(vec![]));
+            f = if rule.inverted() {
+                Condition::And(vec![Condition::Not(Box::new(c)), f])
+            } else {
+                Condition::Or(vec![c, f])
+            };
+        }
+        let restricted = match fold(f, schema) {
+            Folded::Cond(c) => fold(nnf(c, schema), schema),
+            constant => constant,
+        };
+        Ok(match restricted {
+            Folded::True => Access::All,
+            Folded::False => Access::Denied,
+            Folded::Cond(c) => Access::Filter(Plan::new(c)),
+        })
     }
 
     /// The fields of `resource` that `action` is permitted on (§7.4).
