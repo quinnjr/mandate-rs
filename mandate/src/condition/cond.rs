@@ -56,6 +56,7 @@ impl<R> Cond<R> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -71,6 +72,7 @@ impl<R> Cond<R> {
     ///     .build().unwrap();
     /// assert!(ability.can(Act::Update, &mine));
     /// assert!(!ability.can(Act::Update, &Post { locked: true, ..mine }));
+    /// # }
     /// ```
     pub fn all(conds: impl IntoIterator<Item = Cond<R>>) -> Cond<R> {
         Self::new(Condition::And(conds.into_iter().map(|c| c.0).collect()))
@@ -81,6 +83,7 @@ impl<R> Cond<R> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -97,6 +100,7 @@ impl<R> Cond<R> {
     /// assert!(ability.can(Act::Read, &mine));
     /// assert!(!ability.can(Act::Read, &theirs));
     /// assert!(ability.can(Act::Read, &Post { locked: true, ..theirs }));
+    /// # }
     /// ```
     pub fn any(conds: impl IntoIterator<Item = Cond<R>>) -> Cond<R> {
         Self::new(Condition::Or(conds.into_iter().map(|c| c.0).collect()))

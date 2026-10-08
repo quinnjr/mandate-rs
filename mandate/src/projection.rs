@@ -54,6 +54,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -71,6 +72,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// // fetch these fields, then run `can`/`permitted_fields` on the loaded row
     /// assert!(projection.fields.contains(Post::AUTHOR_ID));
     /// assert!(projection.relations.is_empty());
+    /// # }
     /// ```
     pub fn projection<R: SubjectResource<S>>(&self, action: A) -> Result<Projection<R>, EvalError> {
         Self::guard::<R>()?;

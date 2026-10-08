@@ -176,6 +176,7 @@ impl<A: Action, S: Subject> Templates<A, S> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -195,6 +196,7 @@ impl<A: Action, S: Subject> Templates<A, S> {
     ///     r#"[{"action": "update", "subject": "Post", "conditions": {"autor_id": 1}}]"#,
     /// ).unwrap();
     /// assert!(Templates::<Act, Sub>::compile(&typo, &["user"]).is_err());
+    /// # }
     /// ```
     pub fn compile(raw: &[RuleTemplate], roots: &[&str]) -> Result<Self, LoadError> {
         let mut slots = Vec::new();

@@ -23,6 +23,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -45,6 +46,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     ///     .unwrap();
     /// assert!(ability.can(Act::Read, &mine));
     /// assert!(ability.can_type(Act::Read, Sub::Dashboard));
+    /// # }
     /// ```
     pub fn builder() -> AbilityBuilder<A, S> {
         AbilityBuilder::new()
@@ -200,6 +202,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -216,6 +219,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// assert!(ability.can(Act::Read, &mine));
     /// assert!(ability.can(Act::Update, &mine));
     /// assert!(!ability.can(Act::Update, &theirs));
+    /// # }
     /// ```
     pub fn can<R: SubjectResource<S>>(&self, action: A, resource: &R) -> bool {
         matches!(self.decide(action, resource, None), Ok(Some(r)) if !r.inverted())
@@ -226,6 +230,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -241,6 +246,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// #     .build().unwrap();
     /// assert!(ability.can_field(Act::Update, &mine, Post::TITLE));
     /// assert!(!ability.can_field(Act::Update, &theirs, Post::TITLE));
+    /// # }
     /// ```
     pub fn can_field<R: SubjectResource<S>>(
         &self,
@@ -257,6 +263,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -272,6 +279,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// #     .build().unwrap();
     /// assert!(ability.check(Act::Update, &mine).is_ok());
     /// assert!(ability.check(Act::Update, &theirs).is_err());
+    /// # }
     /// ```
     pub fn check<R: SubjectResource<S>>(
         &self,
@@ -325,6 +333,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -347,6 +356,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// }
     /// assert_eq!(ability.access::<Post>(Act::Read).unwrap(), Access::All);
     /// assert_eq!(ability.access::<Post>(Act::Manage).unwrap(), Access::Denied);
+    /// # }
     /// ```
     pub fn access<R: SubjectResource<S>>(&self, action: A) -> Result<Access<R>, EvalError> {
         Self::guard::<R>()?;
@@ -369,6 +379,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -387,6 +398,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// // the database says whether each rule's condition matched this row
     /// let permitted = plan.permitted(|_rule| true);
     /// assert!(permitted.contains(Post::TITLE));
+    /// # }
     /// ```
     pub fn field_plan<R: SubjectResource<S>>(&self, action: A) -> Result<FieldPlan<R>, EvalError> {
         Self::guard::<R>()?;
@@ -417,6 +429,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -438,6 +451,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     /// let names: Vec<_> = fields.iter().map(|(_, name)| name).collect();
     /// assert_eq!(names, ["title", "body"]);
     /// assert!(ability.permitted_fields(Act::Update, &theirs).unwrap().mask().is_empty());
+    /// # }
     /// ```
     pub fn permitted_fields<R: SubjectResource<S>>(
         &self,

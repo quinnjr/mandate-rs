@@ -23,8 +23,18 @@ pub trait DynResource {
 }
 
 /// Reports which scalar fields of a partially loaded resource are loaded.
+///
+/// Named by `#[resource(load_state = field)]`: before reading a scalar
+/// field, the derived [`DynResource`] asks the tracker, and reports
+/// [`ValueRef::NotLoaded`](crate::ValueRef::NotLoaded) (so checks fail
+/// closed) when it answers `false`.
 pub trait LoadState {
-    /// Whether the named scalar field is loaded.
+    /// Whether the scalar field called `field` is loaded.
+    ///
+    /// `field` is the field's schema name, the name rules use: the Rust
+    /// field name, or its `#[resource(rename = "...")]`. Track the set of
+    /// fields that were loaded and answer `false` for any name not in it,
+    /// including names you do not recognise, so a mismatch fails closed.
     fn scalar_loaded(&self, field: &'static str) -> bool;
 }
 

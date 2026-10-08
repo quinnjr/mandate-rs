@@ -72,6 +72,7 @@ impl<R: Resource> Plan<R> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -90,6 +91,7 @@ impl<R: Resource> Plan<R> {
     /// };
     /// assert_eq!(plan.eval(&mine), Ok(true));
     /// assert_eq!(plan.eval(&theirs), Ok(false));
+    /// # }
     /// ```
     pub fn eval(&self, r: &R) -> Result<bool, EvalError> {
         eval(&self.condition, R::schema(), r.as_dyn())

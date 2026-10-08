@@ -45,6 +45,7 @@ impl Context {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -59,6 +60,7 @@ impl Context {
     /// struct User { id: i64, org_id: i64 }
     /// // each root is serialized once, here
     /// let ctx = Context::new().with("user", &User { id: 7, org_id: 3 }).unwrap();
+    /// # }
     /// ```
     pub fn with(mut self, root: &str, value: &impl Serialize) -> Result<Self, serde_json::Error> {
         self.roots
@@ -138,6 +140,7 @@ impl<A: Action, S: Subject> Templates<A, S> {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "derive")] {
     /// # use mandate::{Ability, Access, Action, Cond, Resource, Subject};
     /// # #[derive(Clone, Debug, Resource)]
     /// # struct Post { id: i64, author_id: i64, title: String, body: String, locked: bool }
@@ -158,6 +161,7 @@ impl<A: Action, S: Subject> Templates<A, S> {
     /// let ability = Ability::<Act, Sub>::builder().extend(bound).build().unwrap();
     /// assert!(ability.can(Act::Update, &mine));
     /// assert!(!ability.can(Act::Update, &theirs));
+    /// # }
     /// ```
     pub fn bind(&self, ctx: &Context) -> Result<Bound<A, S>, BindError> {
         let values = self
