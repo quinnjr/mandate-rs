@@ -2,6 +2,7 @@
 
 mod cond;
 pub(crate) mod eval;
+pub(crate) mod fold;
 
 pub use cond::Cond;
 
