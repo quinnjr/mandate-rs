@@ -180,3 +180,52 @@ fn projection_suffices_for_checks() {
     assert!(a.permitted_fields(Action::Read, &t).is_ok());
     assert!(a.can(Action::Read, &t));
 }
+
+#[test]
+fn relation_null_tests_are_relation_dependencies() {
+    let a = Ab::builder()
+        .can(Action::Read, Subject::Post)
+        .cannot(Action::Read, Subject::Post)
+        .when(Post::REVIEWER.is_null())
+        .build()
+        .unwrap();
+    let p = a.projection::<Post>(Action::Read).unwrap();
+    assert!(!p.fields.contains(Post::REVIEWER));
+    assert_eq!(
+        p.relations,
+        vec![RelationProjection {
+            relation: FieldIdx(10),
+            target: User::schema(),
+            fields: mask(&[]),
+            relations: vec![],
+        }]
+    );
+}
+
+#[test]
+fn relation_null_test_check_runs_on_projection() {
+    let a = Ability::<Action, TSubject>::builder()
+        .can(Action::Read, TSubject::TPost)
+        .fields([TPost::TITLE.into()])
+        .cannot(Action::Read, TSubject::TPost)
+        .when(TPost::REVIEWER.is_null())
+        .build()
+        .unwrap();
+    let p = a.projection::<TPost>(Action::Read).unwrap();
+    assert_eq!(p.relations.len(), 1);
+    assert_eq!(p.relations[0].relation, TPost::REVIEWER.idx());
+    let t = TPost {
+        loaded: Loaded(vec!["id", "author_id", "reviewer_id", "status", "score"]),
+        id: 1,
+        author_id: 7,
+        reviewer_id: None,
+        title: "t".into(),
+        status: Status::Published,
+        score: 1.0,
+        org: Lazy::NotLoaded,
+        reviewer: Lazy::Loaded(None),
+        tags: Lazy::NotLoaded,
+    };
+    assert!(a.permitted_fields(Action::Read, &t).is_ok());
+    assert!(!a.can(Action::Read, &t));
+}

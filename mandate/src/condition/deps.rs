@@ -16,9 +16,16 @@ pub(crate) fn collect(
         Condition::Cmp { field, .. }
         | Condition::In { field, .. }
         | Condition::NotIn { field, .. }
-        | Condition::Str { field, .. }
-        | Condition::IsNull(field)
-        | Condition::IsNotNull(field) => fields.insert(*field),
+        | Condition::Str { field, .. } => fields.insert(*field),
+        // Null tests also target to-one relations: those are relation dependencies.
+        Condition::IsNull(field) | Condition::IsNotNull(field) => {
+            match schema.field(*field).map(|d| d.kind) {
+                Some(FieldKind::Relation { target, .. }) => {
+                    entry(rels, *field, target());
+                }
+                _ => fields.insert(*field),
+            }
+        }
         Condition::And(cs) | Condition::Or(cs) => {
             for c in cs {
                 collect(c, schema, fields, rels);
