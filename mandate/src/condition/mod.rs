@@ -1,6 +1,7 @@
 //! The condition AST and its typed builders.
 
 mod cond;
+pub(crate) mod deps;
 pub(crate) mod eval;
 pub(crate) mod fold;
 pub(crate) mod nnf;

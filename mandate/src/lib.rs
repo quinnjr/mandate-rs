@@ -11,6 +11,7 @@ pub mod error;
 pub mod field;
 pub mod fieldset;
 pub mod plan;
+pub mod projection;
 pub mod relation;
 pub mod rule;
 pub mod scalar;
@@ -27,6 +28,7 @@ pub use fieldset::{FieldMask, FieldSet};
 #[cfg(feature = "derive")]
 pub use mandate_derive::{Action, IntoValue, Resource, Subject};
 pub use plan::{Access, Plan};
+pub use projection::{Projection, RelationProjection};
 pub use relation::{Cardinality, DynMany, RelationRef, RelationSlot, ResourcePtr, ToMany, ToOne};
 pub use rule::Rule;
 pub use scalar::{
