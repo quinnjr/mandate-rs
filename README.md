@@ -308,7 +308,10 @@ them (1.99) and is reported as ignored on any other. CI checks them on that
 release with `--include-ignored`. To bump it, change the version in the CI
 `ui` job and in the `rustversion` attribute in `mandate/tests/ui.rs`, run
 `TRYBUILD=overwrite cargo +<version> test -p mandate-rs --all-features --test ui -- --include-ignored`,
-and check that every changed `.stderr` still shows the intended error.
+and check that every changed `.stderr` still shows the intended error. Some
+snapshots quote standard-library source, which rustc shows only with the
+`rust-src` component (`rustup component add rust-src`), so install it before
+running or regenerating them.
 
 ## License
 
