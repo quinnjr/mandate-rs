@@ -28,13 +28,27 @@ impl<R> Cond<R> {
     }
 
     /// Both conditions hold.
+    ///
+    /// The result is one flat `And`: an `And` on either side contributes its
+    /// children, so a chain `a.and(b).and(c)…` of any length stays one level
+    /// deep.
     pub fn and(self, other: Cond<R>) -> Cond<R> {
-        Self::new(Condition::And(vec![self.0, other.0]))
+        Self::new(Condition::And(join(self.0, other.0, |c| match c {
+            Condition::And(cs) => Ok(cs),
+            c => Err(c),
+        })))
     }
 
     /// At least one condition holds.
+    ///
+    /// The result is one flat `Or`: an `Or` on either side contributes its
+    /// children, so a chain `a.or(b).or(c)…` of any length stays one level
+    /// deep.
     pub fn or(self, other: Cond<R>) -> Cond<R> {
-        Self::new(Condition::Or(vec![self.0, other.0]))
+        Self::new(Condition::Or(join(self.0, other.0, |c| match c {
+            Condition::Or(cs) => Ok(cs),
+            c => Err(c),
+        })))
     }
 
     /// All conditions hold (`true` when empty).
@@ -112,6 +126,22 @@ impl<R> Not for Cond<R> {
     fn not(self) -> Cond<R> {
         Self::new(Condition::Not(Box::new(self.0)))
     }
+}
+
+/// The children of a group of one kind joining `a` and `b`: `children`
+/// returns the children of a group of that kind, or gives the condition
+/// back, which then becomes one child.
+fn join(
+    a: Condition,
+    b: Condition,
+    children: impl Fn(Condition) -> Result<Vec<Condition>, Condition>,
+) -> Vec<Condition> {
+    let mut out = children(a).unwrap_or_else(|a| vec![a]);
+    match children(b) {
+        Ok(cs) => out.extend(cs),
+        Err(b) => out.push(b),
+    }
+    out
 }
 
 fn to_value<T: Scalar>(v: impl Into<T::Inner>) -> Value {

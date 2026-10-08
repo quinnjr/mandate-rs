@@ -193,6 +193,54 @@ impl<A: Action, S: Subject> GroupBuilder<A, S> {
     }
 }
 
+/// Deepest allowed nesting of `And`/`Or`/`Not`/`Rel` in a rule condition
+/// (see [`BuildError::TooDeep`]).
+const MAX_DEPTH: usize = 64;
+
+/// Most `can`/`cannot` switches allowed among the rules of one cell (see
+/// [`BuildError::TooManyAlternations`]).
+const MAX_ALTERNATIONS: usize = 256;
+
+/// The nesting depth of `c`: every `And`, `Or`, `Not` and `Rel` is one level,
+/// leaves are at depth 0. Iterative, so any depth is measured safely.
+fn depth(c: &Condition) -> usize {
+    let mut max = 0;
+    let mut stack = vec![(c, 0)];
+    while let Some((c, d)) = stack.pop() {
+        let d = match c {
+            Condition::And(cs) | Condition::Or(cs) => {
+                stack.extend(cs.iter().map(|c| (c, d + 1)));
+                d + 1
+            }
+            Condition::Not(c) => {
+                stack.push((c, d + 1));
+                d + 1
+            }
+            Condition::Rel { cond, .. } => {
+                stack.extend(cond.as_deref().map(|c| (c, d + 1)));
+                d + 1
+            }
+            Condition::Cmp { .. }
+            | Condition::In { .. }
+            | Condition::NotIn { .. }
+            | Condition::Str { .. }
+            | Condition::IsNull(_)
+            | Condition::IsNotNull(_) => d,
+        };
+        max = max.max(d);
+    }
+    max
+}
+
+/// Rejects a condition nested deeper than [`MAX_DEPTH`]. Runs before any
+/// recursive pass over the condition.
+fn check_depth(c: &Condition, subject: &'static str) -> Result<(), BuildError> {
+    match depth(c) {
+        d if d > MAX_DEPTH => Err(BuildError::TooDeep { subject, depth: d }),
+        _ => Ok(()),
+    }
+}
+
 /// Rejects non-finite float operands anywhere in `c`.
 fn check_finite(c: &Condition) -> Result<(), BuildError> {
     let bad = |v: &crate::Value| {
@@ -273,6 +321,7 @@ fn resolve<A: Action, S: Subject>(
                 condition_schema: cs.name,
             });
         }
+        check_depth(c, first.name())?;
         check_finite(c)?;
     }
     let mut conds: Vec<Condition> = std::mem::take(&mut g.conds)
@@ -309,6 +358,7 @@ fn fold_bound<A: Action, S: Subject>(mut r: Rule<A, S>) -> Result<Option<Rule<A,
             });
         }
     };
+    check_depth(&c, subject.name())?;
     check_finite(&c)?;
     Ok(match fold(c, schema) {
         Folded::False => None,
@@ -348,5 +398,13 @@ fn build<A: Action, S: Subject>(entries: Vec<Entry<A, S>>) -> Result<Ability<A, 
             }
         }
     }
-    Ok(Ability::from_rules(rules))
+    let ability = Ability::from_rules(rules);
+    if let Some((subject, action, count)) = ability.alternations_over(MAX_ALTERNATIONS) {
+        return Err(BuildError::TooManyAlternations {
+            subject: subject.name(),
+            action: action.name(),
+            count,
+        });
+    }
+    Ok(ability)
 }

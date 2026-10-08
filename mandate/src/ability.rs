@@ -84,6 +84,23 @@ impl<A: Action, S: Subject> Ability<A, S> {
         &self.index[s.index() * A::COUNT + a.index()]
     }
 
+    /// The first cell (subject-major, in `all()` order) whose rules switch
+    /// between `can` and `cannot` more than `max` times, with its count.
+    pub(crate) fn alternations_over(&self, max: usize) -> Option<(S, A, usize)> {
+        S::all().iter().find_map(|&s| {
+            A::all().iter().find_map(|&a| {
+                let count = self
+                    .cell(a, s)
+                    .windows(2)
+                    .filter(|w| {
+                        self.rules[w[0] as usize].inverted() != self.rules[w[1] as usize].inverted()
+                    })
+                    .count();
+                (count > max).then_some((s, a, count))
+            })
+        })
+    }
+
     /// Fails closed unless `R`'s schema is the schema of its bound subject (spec §4.2).
     pub(crate) fn guard<R: SubjectResource<S>>() -> Result<(), EvalError> {
         let found = R::schema();

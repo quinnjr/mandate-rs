@@ -65,6 +65,37 @@ pub enum BuildError {
         /// What is wrong with the value.
         reason: String,
     },
+    /// The rules covering one (action, subject) pair switch between `can`
+    /// and `cannot` more than 256 times.
+    ///
+    /// Each switch nests the [`access`](crate::Ability::access) formula
+    /// (§7.6) one level deeper, so the limit keeps planning within a small,
+    /// fixed stack. Rules from `manage`/`all` count in every pair they cover.
+    #[error(
+        "the rules for `{action}` on `{subject}` switch between can and cannot {count} times (at most 256)"
+    )]
+    TooManyAlternations {
+        /// Name of the subject.
+        subject: &'static str,
+        /// Name of the action.
+        action: &'static str,
+        /// The number of switches: pairs of adjacent rules (in definition
+        /// order) of which one is a `can` and the other a `cannot`.
+        count: usize,
+    },
+    /// A rule condition nests more than 64 levels deep.
+    ///
+    /// Every `And`, `Or`, `Not` and relation quantifier is one level, and
+    /// leaves are at depth 0. Conditions are evaluated, folded and planned
+    /// recursively, so the limit keeps them within a small, fixed stack.
+    /// `Cond::and`/`Cond::or` chains do not nest: they extend one group.
+    #[error("a condition on `{subject}` is nested {depth} levels deep (at most 64)")]
+    TooDeep {
+        /// Name of the rule's subject.
+        subject: &'static str,
+        /// The condition's depth.
+        depth: usize,
+    },
 }
 
 /// Why a list of [`RuleTemplate`](crate::RuleTemplate)s could not be compiled.
