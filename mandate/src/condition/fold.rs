@@ -26,11 +26,6 @@ pub(crate) enum Folded {
 /// schema `c`'s field indices refer to. Idempotent.
 ///
 /// `DateTime` operands are truncated to microseconds (§5.2).
-// Only the unit tests below call `fold` until the rule builder does.
-#[cfg_attr(
-    not(all(test, feature = "derive", feature = "chrono", feature = "uuid")),
-    allow(dead_code)
-)]
 pub(crate) fn fold(c: Condition, schema: &'static Schema) -> Folded {
     match c {
         Condition::Cmp { field, op, value } => Folded::Cond(Condition::Cmp {

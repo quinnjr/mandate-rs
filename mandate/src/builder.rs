@@ -1,0 +1,286 @@
+//! The rule builder: groups of rules validated and folded at `build()`.
+
+use std::borrow::Cow;
+
+use crate::condition::fold::{Folded, fold};
+use crate::{
+    Ability, Action, BuildError, Cond, Condition, FieldIdx, FieldMask, FieldRef, Resource, Rule,
+    Schema, Subject,
+};
+
+/// Converts one or many actions into a list.
+pub trait IntoActions<A> {
+    /// The actions as a vector.
+    fn into_vec(self) -> Vec<A>;
+}
+
+/// Converts one or many subjects into a list.
+pub trait IntoSubjects<S> {
+    /// The subjects as a vector.
+    fn into_vec(self) -> Vec<S>;
+}
+
+macro_rules! into_list {
+    ($trait:ident, $bound:ident) => {
+        impl<T: $bound> $trait<T> for T {
+            fn into_vec(self) -> Vec<T> {
+                vec![self]
+            }
+        }
+        impl<T: $bound, const N: usize> $trait<T> for [T; N] {
+            fn into_vec(self) -> Vec<T> {
+                Vec::from(self)
+            }
+        }
+        impl<T: $bound> $trait<T> for &[T] {
+            fn into_vec(self) -> Vec<T> {
+                self.to_vec()
+            }
+        }
+        impl<T: $bound> $trait<T> for Vec<T> {
+            fn into_vec(self) -> Vec<T> {
+                self
+            }
+        }
+    };
+}
+into_list!(IntoActions, Action);
+into_list!(IntoSubjects, Subject);
+
+/// A pending rule group, validated at `build()`.
+struct Group<A, S> {
+    actions: Vec<A>,
+    subjects: Vec<S>,
+    inverted: bool,
+    conds: Vec<(Condition, &'static Schema)>,
+    fields: Vec<(Vec<FieldIdx>, &'static Schema)>,
+    reason: Option<Cow<'static, str>>,
+}
+
+/// Collects rule groups and builds an [`Ability`].
+pub struct AbilityBuilder<A, S> {
+    groups: Vec<Group<A, S>>,
+}
+
+impl<A: Action, S: Subject> AbilityBuilder<A, S> {
+    pub(crate) fn new() -> Self {
+        Self { groups: Vec::new() }
+    }
+
+    /// Starts a group of `can` rules.
+    pub fn can(
+        self,
+        actions: impl IntoActions<A>,
+        subjects: impl IntoSubjects<S>,
+    ) -> GroupBuilder<A, S> {
+        GroupBuilder::start(self.groups, false, actions.into_vec(), subjects.into_vec())
+    }
+
+    /// Starts a group of `cannot` rules.
+    pub fn cannot(
+        self,
+        actions: impl IntoActions<A>,
+        subjects: impl IntoSubjects<S>,
+    ) -> GroupBuilder<A, S> {
+        GroupBuilder::start(self.groups, true, actions.into_vec(), subjects.into_vec())
+    }
+
+    /// Validates, folds, expands, and indexes every group.
+    pub fn build(self) -> Result<Ability<A, S>, BuildError> {
+        build(self.groups)
+    }
+}
+
+/// The group under construction; `when`, `fields`, `because` apply to every
+/// (action, subject) pair in it.
+pub struct GroupBuilder<A, S> {
+    done: Vec<Group<A, S>>,
+    cur: Group<A, S>,
+}
+
+impl<A: Action, S: Subject> GroupBuilder<A, S> {
+    fn start(done: Vec<Group<A, S>>, inverted: bool, actions: Vec<A>, subjects: Vec<S>) -> Self {
+        let cur = Group {
+            actions,
+            subjects,
+            inverted,
+            conds: Vec::new(),
+            fields: Vec::new(),
+            reason: None,
+        };
+        Self { done, cur }
+    }
+
+    /// Adds a condition; a repeat call ANDs with the earlier ones.
+    pub fn when<R: Resource>(mut self, c: Cond<R>) -> Self {
+        self.cur.conds.push((c.into_condition(), R::schema()));
+        self
+    }
+
+    /// Restricts the group to these fields; a repeat call unions the fields.
+    pub fn fields<R: Resource>(mut self, fs: impl IntoIterator<Item = FieldRef<R>>) -> Self {
+        self.cur
+            .fields
+            .push((fs.into_iter().map(FieldRef::idx).collect(), R::schema()));
+        self
+    }
+
+    /// Sets the denial reason; the last call wins.
+    pub fn because(mut self, r: impl Into<Cow<'static, str>>) -> Self {
+        self.cur.reason = Some(r.into());
+        self
+    }
+
+    fn finish(mut self) -> Vec<Group<A, S>> {
+        self.done.push(self.cur);
+        self.done
+    }
+
+    /// Finishes this group and starts a `can` group.
+    pub fn can(
+        self,
+        actions: impl IntoActions<A>,
+        subjects: impl IntoSubjects<S>,
+    ) -> GroupBuilder<A, S> {
+        GroupBuilder::start(
+            self.finish(),
+            false,
+            actions.into_vec(),
+            subjects.into_vec(),
+        )
+    }
+
+    /// Finishes this group and starts a `cannot` group.
+    pub fn cannot(
+        self,
+        actions: impl IntoActions<A>,
+        subjects: impl IntoSubjects<S>,
+    ) -> GroupBuilder<A, S> {
+        GroupBuilder::start(self.finish(), true, actions.into_vec(), subjects.into_vec())
+    }
+
+    /// Validates, folds, expands, and indexes every group.
+    pub fn build(self) -> Result<Ability<A, S>, BuildError> {
+        build(self.finish())
+    }
+}
+
+/// Rejects non-finite float operands anywhere in `c`.
+fn check_finite(c: &Condition) -> Result<(), BuildError> {
+    let bad = |v: &crate::Value| {
+        if v.is_finite() {
+            Ok(())
+        } else {
+            Err(BuildError::InvalidValue {
+                reason: format!("non-finite float operand {v:?}"),
+            })
+        }
+    };
+    match c {
+        Condition::Cmp { value, .. } => bad(value),
+        Condition::In { values, .. } | Condition::NotIn { values, .. } => {
+            values.iter().try_for_each(bad)
+        }
+        Condition::And(cs) | Condition::Or(cs) => cs.iter().try_for_each(check_finite),
+        Condition::Not(c) => check_finite(c),
+        Condition::Rel { cond, .. } => cond.as_deref().map_or(Ok(()), check_finite),
+        Condition::Str { .. } | Condition::IsNull(_) | Condition::IsNotNull(_) => Ok(()),
+    }
+}
+
+/// Validates a group, then returns its folded condition and field mask.
+/// `None` for the condition means unconditional; `Ok(None)` overall means the
+/// group's rules are dropped.
+#[allow(clippy::type_complexity)]
+fn resolve<A: Action, S: Subject>(
+    g: &mut Group<A, S>,
+) -> Result<Option<(Option<Condition>, Option<FieldMask>)>, BuildError> {
+    if g.actions.is_empty() {
+        return Err(BuildError::Empty { what: "actions" });
+    }
+    if g.subjects.is_empty() {
+        return Err(BuildError::Empty { what: "subjects" });
+    }
+    if g.fields.iter().any(|(f, _)| f.is_empty()) {
+        return Err(BuildError::Empty { what: "fields" });
+    }
+    let first = g.subjects[0];
+
+    if !g.fields.is_empty() {
+        for (_, fs) in &g.fields {
+            for s in &g.subjects {
+                if !s.schema().is_some_and(|ss| std::ptr::eq(ss, *fs)) {
+                    return Err(BuildError::ForeignField {
+                        subject: s.name(),
+                        field_schema: fs.name,
+                    });
+                }
+            }
+        }
+    }
+    let mask = (!g.fields.is_empty()).then(|| {
+        let mut m = FieldMask::default();
+        g.fields
+            .iter()
+            .flat_map(|(f, _)| f)
+            .for_each(|i| m.insert(*i));
+        m
+    });
+
+    if g.conds.is_empty() {
+        return Ok(Some((None, mask)));
+    }
+    let subject_schema = match (g.subjects.len(), first.schema()) {
+        (1, Some(schema)) if S::ALL != Some(first) => schema,
+        _ => {
+            return Err(BuildError::ConditionsNotAllowed {
+                subject: first.name(),
+            });
+        }
+    };
+    for (c, cs) in &g.conds {
+        if !std::ptr::eq(*cs, subject_schema) {
+            return Err(BuildError::SubjectMismatch {
+                subject: first.name(),
+                condition_schema: cs.name,
+            });
+        }
+        check_finite(c)?;
+    }
+    let mut conds: Vec<Condition> = std::mem::take(&mut g.conds)
+        .into_iter()
+        .map(|(c, _)| c)
+        .collect();
+    let combined = if conds.len() == 1 {
+        conds.remove(0)
+    } else {
+        Condition::And(conds)
+    };
+    Ok(match fold(combined, subject_schema) {
+        Folded::False => None,
+        Folded::True => Some((None, mask)),
+        Folded::Cond(c) => Some((Some(c), mask)),
+    })
+}
+
+fn build<A: Action, S: Subject>(groups: Vec<Group<A, S>>) -> Result<Ability<A, S>, BuildError> {
+    let mut rules = Vec::new();
+    for mut g in groups {
+        let Some((cond, fields)) = resolve(&mut g)? else {
+            continue;
+        };
+        for &a in &g.actions {
+            for &s in &g.subjects {
+                rules.push(Rule::new(
+                    a,
+                    s,
+                    g.inverted,
+                    cond.clone(),
+                    fields,
+                    g.reason.clone(),
+                ));
+            }
+        }
+    }
+    Ok(Ability::from_rules(rules))
+}
