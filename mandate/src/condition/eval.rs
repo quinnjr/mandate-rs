@@ -26,8 +26,8 @@ pub(crate) fn eval(
     let found = r.resource_schema();
     if !core::ptr::eq(found, schema) {
         return Err(EvalError::SchemaMismatch {
-            expected: schema.name,
-            found: found.name,
+            expected: schema.name(),
+            found: found.name(),
         });
     }
     node(cond, schema, r)
@@ -141,11 +141,8 @@ fn order(v: ValueRef<'_>, x: &Value) -> Option<Ordering> {
 
 /// Whether a nullable scalar is null or a to-one relation is absent.
 fn is_null(schema: &Schema, r: &dyn DynResource, field: FieldIdx) -> Result<bool, EvalError> {
-    match schema.field(field) {
-        Some(FieldDef {
-            kind: FieldKind::Relation { .. },
-            ..
-        }) => match r.relation(field) {
+    match schema.field(field).map(FieldDef::kind) {
+        Some(FieldKind::Relation { .. }) => match r.relation(field) {
             RelationRef::NotLoaded => Err(not_loaded(schema, field)),
             RelationRef::Absent => Ok(true),
             RelationRef::One(_) | RelationRef::Many(_) => Ok(false),
@@ -163,10 +160,8 @@ fn related(
     quant: Quant,
     cond: Option<&Condition>,
 ) -> Result<bool, EvalError> {
-    let Some(FieldDef {
-        name,
-        kind: FieldKind::Relation { target, .. },
-    }) = schema.field(field)
+    let Some((name, FieldKind::Relation { target, .. })) =
+        schema.field(field).map(|def| (def.name(), def.kind()))
     else {
         // Not a relation (unreachable after validation): read as absent.
         return Ok(matches!(quant, Quant::Every | Quant::None));
@@ -204,7 +199,7 @@ fn related(
 /// The `NotLoaded` error for a field of `schema`.
 fn not_loaded(schema: &Schema, field: FieldIdx) -> EvalError {
     let path = match schema.field(field) {
-        Some(def) => def.name.to_owned(),
+        Some(def) => def.name().to_owned(),
         // Unreachable after validation.
         None => format!("#{}", field.0),
     };

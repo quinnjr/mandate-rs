@@ -148,14 +148,14 @@ fn projection_suffices_for_checks() {
     let p = a.projection::<TPost>(Action::Read).unwrap();
     let schema = TPost::schema();
     let not_loaded: Vec<&'static str> = schema
-        .fields
+        .fields()
         .iter()
         .enumerate()
         .filter(|(i, d)| {
-            matches!(d.kind, FieldKind::Scalar { .. })
+            matches!(d.kind(), FieldKind::Scalar { .. })
                 && !p.fields.mask().contains(FieldIdx(*i as u16))
         })
-        .map(|(_, d)| d.name)
+        .map(|(_, d)| d.name())
         .collect();
     assert!(not_loaded.contains(&"score"));
     assert!(!not_loaded.contains(&"author_id"));

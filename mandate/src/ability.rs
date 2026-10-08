@@ -107,12 +107,12 @@ impl<A: Action, S: Subject> Ability<A, S> {
         match R::SUBJECT.schema() {
             Some(expected) if core::ptr::eq(expected, found) => Ok(()),
             Some(expected) => Err(EvalError::SchemaMismatch {
-                expected: expected.name,
-                found: found.name,
+                expected: expected.name(),
+                found: found.name(),
             }),
             None => Err(EvalError::SchemaMismatch {
                 expected: R::SUBJECT.name(),
-                found: found.name,
+                found: found.name(),
             }),
         }
     }
@@ -175,7 +175,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     }
 
     fn field_name<R: Resource>(field: FieldIdx) -> Option<&'static str> {
-        R::schema().field(field).map(|d| d.name)
+        R::schema().field(field).map(|d| d.name())
     }
 
     /// Whether `action` is allowed on `resource`. Fails closed (`false`) on any error.
@@ -429,7 +429,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     ) -> Result<FieldSet<R>, EvalError> {
         Self::guard::<R>()?;
         let dynr: &dyn DynResource = resource.as_dyn();
-        let all = FieldMask::all(R::schema().fields.len());
+        let all = FieldMask::all(R::schema().fields().len());
         let mut set = FieldMask::default();
         for &i in self.cell(action, R::SUBJECT) {
             let rule = &self.rules[i as usize];

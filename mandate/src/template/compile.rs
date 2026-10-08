@@ -425,7 +425,7 @@ impl Compiler<'_> {
         else {
             return Err(self.err(path, LoadErrorKind::UnknownField(name.to_owned())));
         };
-        match def.kind {
+        match def.kind() {
             FieldKind::Scalar { kind, nullable } => {
                 self.scalar(idx, kind, nullable, v, path, negative)
             }

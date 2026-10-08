@@ -1,0 +1,26 @@
+error[E0080]: evaluation panicked: duplicate field name in schema
+ --> tests/ui/fail/schema_duplicate_name.rs:3:25
+  |
+3 |   static SCHEMA: Schema = Schema::new(
+  |  _________________________^
+4 | |     "Doc",
+5 | |     &[
+6 | |         FieldDef::scalar("id", Kind::Int, false),
+7 | |         FieldDef::opaque("id"),
+8 | |     ],
+9 | | );
+  | |_^ evaluation of `SCHEMA` failed inside this call
+  |
+note: inside `Schema::new`
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+  |
+ ::: src/schema.rs
+  |
+  | /                 assert!(
+  | |                     !same_bytes(bytes, fields[j].name.as_bytes()),
+  | |                     "duplicate field name in schema"
+  | |                 );
+  | |_________________- in this macro invocation

@@ -9,28 +9,28 @@ use mandate::{
 };
 
 fn scalar(f: &FieldDef) -> (Kind, bool) {
-    match f.kind {
+    match f.kind() {
         FieldKind::Scalar { kind, nullable } => (kind, nullable),
-        other => panic!("`{}` is not a scalar: {other:?}", f.name),
+        other => panic!("`{}` is not a scalar: {other:?}", f.name()),
     }
 }
 
 fn relation(f: &FieldDef) -> (&'static Schema, CardinalityKind, bool) {
-    match f.kind {
+    match f.kind() {
         FieldKind::Relation {
             target,
             cardinality,
             nullable,
         } => (target(), cardinality, nullable),
-        other => panic!("`{}` is not a relation: {other:?}", f.name),
+        other => panic!("`{}` is not a relation: {other:?}", f.name()),
     }
 }
 
 #[test]
 fn post_schema_shape() {
     let s = Post::schema();
-    assert_eq!(s.name, "Post");
-    let names: Vec<_> = s.fields.iter().map(|f| f.name).collect();
+    assert_eq!(s.name(), "Post");
+    let names: Vec<_> = s.fields().iter().map(|f| f.name()).collect();
     assert_eq!(
         names,
         [
@@ -49,7 +49,7 @@ fn post_schema_shape() {
             "metadata"
         ]
     );
-    let f = s.fields;
+    let f = s.fields();
     assert_eq!(scalar(&f[1]), (Kind::Int, false));
     assert_eq!(scalar(&f[2]), (Kind::Int, true));
     assert_eq!(scalar(&f[3]), (Kind::String, false));
@@ -63,19 +63,19 @@ fn post_schema_shape() {
 
     let (org, card, nullable) = relation(&f[9]);
     assert_eq!(
-        (org.name, card, nullable),
+        (org.name(), card, nullable),
         ("Org", CardinalityKind::ToOne, false)
     );
     let (user, card, nullable) = relation(&f[10]);
     assert_eq!(
-        (user.name, card, nullable),
+        (user.name(), card, nullable),
         ("User", CardinalityKind::ToOne, true)
     );
     let (tag, card, _) = relation(&f[11]);
-    assert_eq!((tag.name, card), ("Tag", CardinalityKind::ToMany));
-    assert!(matches!(f[12].kind, FieldKind::Opaque));
+    assert_eq!((tag.name(), card), ("Tag", CardinalityKind::ToMany));
+    assert!(matches!(f[12].kind(), FieldKind::Opaque));
 
-    assert_eq!(scalar(&Tag::schema().fields[1]), (Kind::String, true));
+    assert_eq!(scalar(&Tag::schema().fields()[1]), (Kind::String, true));
 }
 
 #[test]
@@ -196,14 +196,14 @@ fn resource_is_its_own_slot_and_pointer() {
 #[test]
 fn schema_identity_and_cycles() {
     assert!(std::ptr::eq(Post::schema(), Post::schema()));
-    let FieldKind::Relation { target, .. } = Post::schema().fields[9].kind else {
+    let FieldKind::Relation { target, .. } = Post::schema().fields()[9].kind() else {
         panic!()
     };
     assert!(std::ptr::eq(target(), Org::schema()));
     // Post.reviewer -> User, User.posts -> Post.
-    let (user, _, _) = relation(&Post::schema().fields[10]);
+    let (user, _, _) = relation(&Post::schema().fields()[10]);
     assert!(std::ptr::eq(user, User::schema()));
-    let (posts, card, _) = relation(&User::schema().fields[3]);
+    let (posts, card, _) = relation(&User::schema().fields()[3]);
     assert!(std::ptr::eq(posts, Post::schema()));
     assert_eq!(card, CardinalityKind::ToMany);
 }
@@ -228,24 +228,24 @@ fn load_state_reports_not_loaded() {
     assert_eq!(d.value(FieldIdx(4)), ValueRef::Str("draft"));
     let s = TPost::schema();
     assert_eq!(s.index_of("loaded"), None);
-    assert_eq!(s.fields.len(), 9);
+    assert_eq!(s.fields().len(), 9);
     assert!(matches!(d.relation(FieldIdx(6)), RelationRef::NotLoaded));
     assert!(matches!(d.relation(FieldIdx(7)), RelationRef::Absent));
     assert!(matches!(d.relation(FieldIdx(8)), RelationRef::Many(m) if m.is_empty()));
 
     // Lazy slots classify like the slot they wrap.
-    let (org, card, nullable) = relation(&s.fields[6]);
+    let (org, card, nullable) = relation(&s.fields()[6]);
     assert_eq!(
-        (org.name, card, nullable),
+        (org.name(), card, nullable),
         ("TOrg", CardinalityKind::ToOne, false)
     );
-    let (user, card, nullable) = relation(&s.fields[7]);
+    let (user, card, nullable) = relation(&s.fields()[7]);
     assert_eq!(
-        (user.name, card, nullable),
+        (user.name(), card, nullable),
         ("TUser", CardinalityKind::ToOne, true)
     );
-    let (tag, card, _) = relation(&s.fields[8]);
-    assert_eq!((tag.name, card), ("TTag", CardinalityKind::ToMany));
+    let (tag, card, _) = relation(&s.fields()[8]);
+    assert_eq!((tag.name(), card), ("TTag", CardinalityKind::ToMany));
 
     // A loaded relation whose target has unloaded scalars.
     let t = TPost {
@@ -267,7 +267,7 @@ fn load_state_reports_not_loaded() {
 
 #[test]
 fn fieldless_resource() {
-    assert!(Marker::schema().fields.is_empty());
+    assert!(Marker::schema().fields().is_empty());
     let m = Marker {};
     assert_eq!(m.as_dyn().value(FieldIdx(0)), ValueRef::Null);
     assert!(matches!(
@@ -288,7 +288,7 @@ struct Renamed {
 #[test]
 fn raw_idents_and_renames() {
     let s = Renamed::schema();
-    assert_eq!(s.name, "Renamed");
+    assert_eq!(s.name(), "Renamed");
     assert_eq!(s.index_of("type"), Some(Renamed::TYPE.idx()));
     assert_eq!(s.index_of("headline"), Some(Renamed::TITLE.idx()));
     assert_eq!(s.index_of("title"), None);

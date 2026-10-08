@@ -113,7 +113,7 @@ fn rel(
         target,
         cardinality,
         nullable,
-    }) = schema.field(relation).map(|def| def.kind)
+    }) = schema.field(relation).map(|def| def.kind())
     else {
         // Not a relation (unreachable after validation): there is no target
         // schema to fold the condition against.

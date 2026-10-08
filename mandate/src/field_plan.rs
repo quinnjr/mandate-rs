@@ -29,7 +29,7 @@ impl<R: Resource> FieldPlan<R> {
     /// For every fully loaded row this equals
     /// [`Ability::permitted_fields`](crate::Ability::permitted_fields).
     pub fn permitted(&self, matched: impl Fn(usize) -> bool) -> FieldSet<R> {
-        let all = FieldMask::all(R::schema().fields.len());
+        let all = FieldMask::all(R::schema().fields().len());
         let mut set = FieldMask::default();
         for (i, rule) in self.rules.iter().enumerate() {
             if rule.cond.is_some() && !matched(i) {

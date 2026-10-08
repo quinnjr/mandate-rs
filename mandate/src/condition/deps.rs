@@ -19,7 +19,7 @@ pub(crate) fn collect(
         | Condition::Str { field, .. } => fields.insert(*field),
         // Null tests also target to-one relations: those are relation dependencies.
         Condition::IsNull(field) | Condition::IsNotNull(field) => {
-            match schema.field(*field).map(|d| d.kind) {
+            match schema.field(*field).map(|d| d.kind()) {
                 Some(FieldKind::Relation { target, .. }) => {
                     entry(rels, *field, target());
                 }
@@ -33,7 +33,8 @@ pub(crate) fn collect(
         }
         Condition::Not(c) => collect(c, schema, fields, rels),
         Condition::Rel { relation, cond, .. } => {
-            let Some(FieldKind::Relation { target, .. }) = schema.field(*relation).map(|d| d.kind)
+            let Some(FieldKind::Relation { target, .. }) =
+                schema.field(*relation).map(|d| d.kind())
             else {
                 return;
             };

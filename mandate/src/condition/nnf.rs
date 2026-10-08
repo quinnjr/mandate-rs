@@ -75,7 +75,7 @@ fn negative(c: Condition, schema: &'static Schema) -> Condition {
 /// left out only where the schema rules null out.
 fn may_be_null(schema: &Schema, field: FieldIdx) -> bool {
     !matches!(
-        schema.field(field).map(|def| def.kind),
+        schema.field(field).map(|def| def.kind()),
         Some(FieldKind::Scalar {
             nullable: false,
             ..
@@ -97,7 +97,7 @@ fn rel(
         target,
         cardinality,
         ..
-    }) = schema.field(relation).map(|def| def.kind)
+    }) = schema.field(relation).map(|def| def.kind())
     else {
         // Not a relation (unreachable after validation): `eval` reads it as
         // absent, where exactly `Every` and `None` hold.

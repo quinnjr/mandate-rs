@@ -129,7 +129,7 @@ fn permitted_fields_walk() {
         .when(Post::STATUS.eq(Status::Draft))
         .build()
         .unwrap();
-    let n = Post::schema().fields.len();
+    let n = Post::schema().fields().len();
     let d = a.permitted_fields(Action::Read, &draft(7)).unwrap();
     assert_eq!(d.mask().len(), n - 1);
     assert!(!d.contains(Post::BODY) && d.contains(Post::TITLE));

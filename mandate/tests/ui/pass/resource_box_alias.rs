@@ -17,14 +17,14 @@ struct Doc {
 }
 
 fn main() {
-    let fields = Doc::schema().fields;
-    let FieldKind::Relation { target, cardinality, nullable } = fields[Doc::OWNER.idx().0 as usize].kind else {
+    let fields = Doc::schema().fields();
+    let FieldKind::Relation { target, cardinality, nullable } = fields[Doc::OWNER.idx().0 as usize].kind() else {
         panic!("owner is not a relation");
     };
     assert_eq!(cardinality, CardinalityKind::ToOne);
     assert!(nullable);
     assert!(std::ptr::eq(target(), User::schema()));
-    let FieldKind::Relation { target, cardinality, .. } = fields[Doc::EDITORS.idx().0 as usize].kind else {
+    let FieldKind::Relation { target, cardinality, .. } = fields[Doc::EDITORS.idx().0 as usize].kind() else {
         panic!("editors is not a relation");
     };
     assert_eq!(cardinality, CardinalityKind::ToMany);

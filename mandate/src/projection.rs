@@ -75,7 +75,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
     pub fn projection<R: SubjectResource<S>>(&self, action: A) -> Result<Projection<R>, EvalError> {
         Self::guard::<R>()?;
         let schema = R::schema();
-        let all = FieldMask::all(schema.fields.len());
+        let all = FieldMask::all(schema.fields().len());
         let mut permitted = FieldMask::default();
         let mut fields = FieldMask::default();
         let mut relations = Vec::new();
@@ -97,7 +97,7 @@ impl<A: Action, S: Subject> Ability<A, S> {
         }
         for f in permitted.iter() {
             if !matches!(
-                schema.field(f).map(|d| d.kind),
+                schema.field(f).map(|d| d.kind()),
                 Some(FieldKind::Relation { .. })
             ) {
                 fields.insert(f);

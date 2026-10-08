@@ -288,7 +288,7 @@ fn resolve<A: Action, S: Subject>(
                 if !s.schema().is_some_and(|ss| std::ptr::eq(ss, *fs)) {
                     return Err(BuildError::ForeignField {
                         subject: s.name(),
-                        field_schema: fs.name,
+                        field_schema: fs.name(),
                     });
                 }
             }
@@ -318,7 +318,7 @@ fn resolve<A: Action, S: Subject>(
         if !std::ptr::eq(*cs, subject_schema) {
             return Err(BuildError::SubjectMismatch {
                 subject: first.name(),
-                condition_schema: cs.name,
+                condition_schema: cs.name(),
             });
         }
         check_depth(c, first.name())?;

@@ -44,7 +44,7 @@ impl<A: Action, S: Subject> Serialize for Rule<A, S> {
                 .map(|i| {
                     schema
                         .field(i)
-                        .map(|d| d.name)
+                        .map(|d| d.name())
                         .ok_or_else(|| Ser::Error::custom("field index out of range"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -127,9 +127,9 @@ fn object(c: &Condition, schema: &'static Schema) -> Result<Entries, String> {
                 target,
                 cardinality,
                 ..
-            } = def.kind
+            } = def.kind()
             else {
-                return Err(format!("`{}` is not a relation", def.name));
+                return Err(format!("`{}` is not a relation", def.name()));
             };
             let inner = match cond {
                 Some(c) => TemplateValue::Object(object(c, target())?),
@@ -142,9 +142,14 @@ fn object(c: &Condition, schema: &'static Schema) -> Result<Entries, String> {
                 }
                 (CardinalityKind::ToMany, Quant::Some) => op_object("$some", inner),
                 (CardinalityKind::ToMany, Quant::Every) => op_object("$every", inner),
-                _ => return Err(format!("quantifier {quant:?} does not fit `{}`", def.name)),
+                _ => {
+                    return Err(format!(
+                        "quantifier {quant:?} does not fit `{}`",
+                        def.name()
+                    ));
+                }
             };
-            vec![(key(def.name), value)]
+            vec![(key(def.name()), value)]
         }
     })
 }
@@ -152,14 +157,14 @@ fn object(c: &Condition, schema: &'static Schema) -> Result<Entries, String> {
 fn name(schema: &Schema, field: FieldIdx) -> Result<String, String> {
     schema
         .field(field)
-        .map(|d| key(d.name))
+        .map(|d| key(d.name()))
         .ok_or_else(|| "field index out of range".to_owned())
 }
 
 fn is_relation(schema: &Schema, field: FieldIdx) -> bool {
     schema
         .field(field)
-        .is_some_and(|d| matches!(d.kind, FieldKind::Relation { .. }))
+        .is_some_and(|d| matches!(d.kind(), FieldKind::Relation { .. }))
 }
 
 fn op_object(op: &str, v: TemplateValue) -> TemplateValue {

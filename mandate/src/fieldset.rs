@@ -89,7 +89,7 @@ impl<R: Resource> FieldSet<R> {
         let schema = R::schema();
         self.mask
             .iter()
-            .filter_map(move |i| schema.field(i).map(|d| (i, d.name)))
+            .filter_map(move |i| schema.field(i).map(|d| (i, d.name())))
     }
 }
 

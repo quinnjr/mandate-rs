@@ -351,9 +351,9 @@ fn relation_fields() -> FieldMask {
 /// The names of `schema`'s fields outside `fetched`, reported as not loaded.
 fn unfetched(schema: &Schema, fetched: FieldMask) -> Loaded {
     Loaded(
-        (0..schema.fields.len())
+        (0..schema.fields().len())
             .filter(|&i| !fetched.contains(FieldIdx(i as u16)))
-            .map(|i| schema.fields[i].name)
+            .map(|i| schema.fields()[i].name())
             .collect(),
     )
 }
@@ -367,15 +367,12 @@ fn check_relations(rels: &[RelationProjection], owner: &'static Schema) {
         "unsorted or duplicate relations: {rels:?}"
     );
     for r in rels {
-        let Some(FieldDef {
-            kind: FieldKind::Relation { target, .. },
-            ..
-        }) = owner.field(r.relation)
+        let Some(FieldKind::Relation { target, .. }) = owner.field(r.relation).map(FieldDef::kind)
         else {
-            panic!("{:?} is not a relation of {}", r.relation, owner.name)
+            panic!("{:?} is not a relation of {}", r.relation, owner.name())
         };
         assert!(std::ptr::eq(target(), r.target), "wrong target in {r:?}");
-        let all = FieldMask::all(r.target.fields.len());
+        let all = FieldMask::all(r.target.fields().len());
         assert!(r.fields.is_subset(&all), "unknown fields in {r:?}");
         check_relations(&r.relations, r.target);
     }
