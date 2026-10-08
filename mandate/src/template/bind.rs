@@ -292,10 +292,10 @@ struct Binder<'a> {
 
 impl Binder<'_> {
     fn cond(&mut self, c: &TCond) -> Result<Condition, BindError> {
-        if let Some(id) = leaf_slot(c) {
-            if let Resolved::Unresolved = self.values[id.0] {
-                return Ok(self.constant(id));
-            }
+        if let Some(id) = leaf_slot(c)
+            && let Resolved::Unresolved = self.values[id.0]
+        {
+            return Ok(self.constant(id));
         }
         Ok(match c {
             TCond::Cmp { field, op, value } => Condition::Cmp {

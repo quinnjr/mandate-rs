@@ -464,10 +464,10 @@ impl<A: Action, S: Subject> Ability<A, S> {
         let mut set = FieldMask::default();
         for &i in self.cell(action, R::SUBJECT) {
             let rule = &self.rules[i as usize];
-            if let Some(c) = rule.condition() {
-                if !eval(c, R::schema(), dynr)? {
-                    continue;
-                }
+            if let Some(c) = rule.condition()
+                && !eval(c, R::schema(), dynr)?
+            {
+                continue;
             }
             let fields = rule.fields().unwrap_or(all);
             if rule.inverted() {

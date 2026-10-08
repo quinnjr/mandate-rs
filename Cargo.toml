@@ -4,5 +4,5 @@ members = ["mandate", "mandate-derive"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.94"
 license = "MIT OR Apache-2.0"

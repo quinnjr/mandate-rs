@@ -109,13 +109,13 @@ pub(crate) fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     };
 
     let load_state = load_state_attr(&input.attrs)?;
-    if let Some(ls) = &load_state {
-        if !named.iter().any(|f| f.ident.as_ref() == Some(ls)) {
-            return Err(Error::new(
-                ls.span(),
-                format!("`load_state` names `{ls}`, which is not a field of this struct"),
-            ));
-        }
+    if let Some(ls) = &load_state
+        && !named.iter().any(|f| f.ident.as_ref() == Some(ls))
+    {
+        return Err(Error::new(
+            ls.span(),
+            format!("`load_state` names `{ls}`, which is not a field of this struct"),
+        ));
     }
 
     let mut fields: Vec<SchemaField<'_>> = Vec::new();

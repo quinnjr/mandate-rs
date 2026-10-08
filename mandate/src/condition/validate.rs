@@ -155,10 +155,10 @@ fn fields_at(c: &Condition, schema: &'static Schema, prefix: &str) -> Result<(),
             reason,
         };
         check(def.kind(), u).map_err(|m| invalid(m.to_string()))?;
-        if let FieldKind::Scalar { kind, .. } = def.kind() {
-            if let Some(v) = operands.iter().find(|v| !operand_fits(kind, v)) {
-                return Err(invalid(format!("operand {v:?} does not fit {kind:?}")));
-            }
+        if let FieldKind::Scalar { kind, .. } = def.kind()
+            && let Some(v) = operands.iter().find(|v| !operand_fits(kind, v))
+        {
+            return Err(invalid(format!("operand {v:?} does not fit {kind:?}")));
         }
         Ok(def)
     };

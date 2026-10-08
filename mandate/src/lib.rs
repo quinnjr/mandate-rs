@@ -265,7 +265,7 @@
 //! - `uuid`: `uuid::Uuid` as a field type.
 //! - `chrono`: `chrono::DateTime<Utc>` and `NaiveDate` as field types.
 //!
-//! The minimum supported Rust version is 1.85.
+//! The minimum supported Rust version is 1.94.
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
