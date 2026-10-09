@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Every action is pinned to a full commit SHA, with its version (or, for
+# dtolnay/rust-toolchain, its branch) in the trailing comment. Dependabot
+# (`.github/dependabot.yml`) proposes the bumps.
+jobs:
+  stable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: stable
+          # `rust-src`: see the `ui` job.
+          components: rustfmt, clippy, rust-src
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # The trybuild `ui` test is ignored unless the compiler is the one its
+      # snapshots were generated on (see the `ui` job), so this runs on any
+      # stable release.
+      - run: cargo test --workspace --all-features --no-fail-fast
+      - run: cargo build -p mandate-rs --no-default-features
+      - run: cargo test -p mandate-rs --no-default-features --doc
+      - run: cargo doc --workspace --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  # The trybuild snapshots (`mandate/tests/ui/fail/*.stderr`) quote compiler
+  # diagnostics, which change between Rust releases, so they are checked on
+  # the compiler that generated them. `mandate/tests/ui.rs` ignores the test
+  # on any other compiler; `--include-ignored` runs it here regardless, so a
+  # version mismatch fails instead of silently skipping. To bump it: change
+  # the version below and the `rustversion` attribute in `mandate/tests/ui.rs`,
+  # run `TRYBUILD=overwrite cargo +<version> test -p mandate-rs --all-features --test ui -- --include-ignored`,
+  # review every changed `.stderr` (each must still show the intended error),
+  # and commit them with the bump. Some snapshots quote standard-library
+  # source, which rustc shows only when the `rust-src` component is installed,
+  # so they are generated and checked with it.
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: "1.99"
+          components: rust-src
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo test -p mandate-rs --all-features --test ui -- --include-ignored
+
+  # The property tests with more cases than the default 256, optimized. A
+  # failing run saves the failing seeds next to the test; they are uploaded
+  # so they can be committed and replayed. `p6_most_restrictive` rejects
+  # about 13% of its cases, and proptest gives up after 1024 rejects, so
+  # raise `max_global_rejects` before going much past 7,000 cases.
+  proptest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: PROPTEST_CASES=2000 cargo test -p mandate-rs --all-features --test properties --release
+      - if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: proptest-regressions
+          path: mandate/tests/*.proptest-regressions
+          if-no-files-found: ignore
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master
+        with:
+          toolchain: "1.94"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo check --workspace --all-features --lib
+      # The trybuild `ui` test reports as ignored here: its snapshots belong
+      # to the compiler of the `ui` job.
+      - run: cargo test --workspace --all-features --no-fail-fast

@@ -1,0 +1,6 @@
+error: `#[subject(all)]` cannot be combined with `resource`
+ --> tests/ui/fail/subject_all_with_resource.rs:6:5
+  |
+6 | /     #[subject(all, resource = fixture::Post)]
+7 | |     A,
+  | |_____^

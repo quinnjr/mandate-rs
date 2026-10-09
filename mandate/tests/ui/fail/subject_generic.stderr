@@ -1,0 +1,5 @@
+error: `Subject` does not support generics
+ --> tests/ui/fail/subject_generic.rs:2:7
+  |
+2 | enum S<T> {
+  |       ^^^

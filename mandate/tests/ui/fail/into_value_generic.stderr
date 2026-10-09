@@ -1,0 +1,5 @@
+error: `IntoValue` cannot be derived for generic enums
+ --> tests/ui/fail/into_value_generic.rs:4:11
+  |
+4 | enum Level<T> {
+  |           ^

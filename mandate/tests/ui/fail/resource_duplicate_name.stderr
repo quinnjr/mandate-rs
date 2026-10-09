@@ -1,0 +1,5 @@
+error: duplicate field name `title`
+ --> tests/ui/fail/resource_duplicate_name.rs:6:25
+  |
+6 |     #[resource(rename = "title")]
+  |                         ^^^^^^^

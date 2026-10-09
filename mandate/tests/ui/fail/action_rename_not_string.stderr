@@ -1,0 +1,5 @@
+error: expected a string literal
+ --> tests/ui/fail/action_rename_not_string.rs:3:23
+  |
+3 |     #[action(rename = 5)]
+  |                       ^

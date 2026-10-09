@@ -1,0 +1,20 @@
+error[E0271]: type mismatch resolving `<Org as RelationSlot>::Cardinality == ToMany`
+ --> tests/ui/fail/quantifier_on_to_one.rs:7:23
+  |
+7 |     let _ = Post::ORG.some(Org::ID.eq(1));
+  |                       ^^^^ type mismatch resolving `<Org as RelationSlot>::Cardinality == ToMany`
+  |
+note: expected this to be `mandate::ToMany`
+ --> tests/ui/fail/../../common/fixture.rs
+  |
+  | #[derive(Clone, Debug, Resource)]
+  |                        ^^^^^^^^
+note: required by a bound in `mandate::condition::cond::<impl mandate::Rel<R, T>>::some`
+ --> src/condition/cond.rs
+  |
+  |     pub fn some(self, c: Cond<T::Target>) -> Cond<R>
+  |            ---- required by a bound in this associated function
+  |     where
+  |         T: RelationSlot<Cardinality = ToMany>,
+  |                         ^^^^^^^^^^^^^^^^^^^^ required by this bound in `mandate::condition::cond::<impl Rel<R, T>>::some`
+  = note: this error originates in the derive macro `Resource` (in Nightly builds, run with -Z macro-backtrace for more info)

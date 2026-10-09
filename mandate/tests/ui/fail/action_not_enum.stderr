@@ -1,0 +1,5 @@
+error: `Action` can only be derived for enums
+ --> tests/ui/fail/action_not_enum.rs:2:8
+  |
+2 | struct A;
+  |        ^

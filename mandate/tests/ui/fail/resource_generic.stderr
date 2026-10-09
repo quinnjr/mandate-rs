@@ -1,0 +1,5 @@
+error: `Resource` cannot be derived for generic structs
+ --> tests/ui/fail/resource_generic.rs:4:15
+  |
+4 | struct Wrapper<T> {
+  |               ^

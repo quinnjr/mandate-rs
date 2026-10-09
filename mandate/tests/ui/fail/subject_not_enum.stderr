@@ -1,0 +1,5 @@
+error: `Subject` can only be derived for enums
+ --> tests/ui/fail/subject_not_enum.rs:2:8
+  |
+2 | struct S;
+  |        ^

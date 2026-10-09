@@ -1,0 +1,5 @@
+error: `Resource` can only be derived for structs with named fields
+ --> tests/ui/fail/resource_on_enum.rs:4:6
+  |
+4 | enum Shape {
+  |      ^^^^^

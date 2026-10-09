@@ -1,0 +1,19 @@
+error[E0277]: the trait bound `i64: Textual` is not satisfied
+ --> tests/ui/fail/contains_on_int.rs:7:29
+  |
+7 |     let _ = Post::AUTHOR_ID.contains("x");
+  |                             ^^^^^^^^ the trait `Textual` is not implemented for `i64`
+  |
+help: the trait `Textual` is implemented for `std::string::String`
+ --> src/scalar.rs
+  |
+  | impl Textual for String {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `mandate::condition::cond::<impl mandate::Field<R, T>>::contains`
+ --> src/condition/cond.rs
+  |
+  |     pub fn contains(self, v: impl Into<String>) -> Cond<R>
+  |            -------- required by a bound in this associated function
+  |     where
+  |         T::Inner: Textual,
+  |                   ^^^^^^^ required by this bound in `mandate::condition::cond::<impl Field<R, T>>::contains`

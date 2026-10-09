@@ -1,0 +1,5 @@
+error: `Action` does not support generics
+ --> tests/ui/fail/action_generic.rs:2:7
+  |
+2 | enum A<T> {
+  |       ^^^

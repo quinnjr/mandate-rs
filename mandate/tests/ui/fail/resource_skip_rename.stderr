@@ -1,0 +1,5 @@
+error: `skip` cannot be combined with `rename`
+ --> tests/ui/fail/resource_skip_rename.rs:6:31
+  |
+6 |     #[resource(skip, rename = "html")]
+  |                               ^^^^^^

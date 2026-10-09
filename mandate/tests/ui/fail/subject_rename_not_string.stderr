@@ -1,0 +1,5 @@
+error: expected a string literal
+ --> tests/ui/fail/subject_rename_not_string.rs:3:24
+  |
+3 |     #[subject(rename = true)]
+  |                        ^^^^

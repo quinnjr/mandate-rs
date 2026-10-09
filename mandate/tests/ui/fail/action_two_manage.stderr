@@ -1,0 +1,6 @@
+error: only one variant may be marked `#[action(manage)]`
+ --> tests/ui/fail/action_two_manage.rs:5:5
+  |
+5 | /     #[action(manage)]
+6 | |     Two,
+  | |_______^

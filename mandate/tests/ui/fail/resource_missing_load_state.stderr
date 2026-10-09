@@ -1,0 +1,5 @@
+error: `load_state` names `loaded`, which is not a field of this struct
+ --> tests/ui/fail/resource_missing_load_state.rs:4:25
+  |
+4 | #[resource(load_state = loaded)]
+  |                         ^^^^^^

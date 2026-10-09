@@ -1,0 +1,9 @@
+[workspace]
+resolver = "3"
+members = ["mandate", "mandate-derive"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.94"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/quinnjr/mandate-rs"
